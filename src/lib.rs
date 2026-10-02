@@ -15,6 +15,7 @@
 //! channels.
 
 pub mod decode;
+pub mod encode;
 mod bits;
 mod crc;
 mod error;
@@ -26,5 +27,6 @@ mod tables;
 pub mod xing;
 
 pub use decode::{Decoder, DecoderOptions, Frame, FrameDecoder, Gapless};
+pub use encode::{BitrateMode, Encoder, EncoderConfig};
 pub use error::{Error, Result};
 pub use header::{FrameHeader, Layer, Mode, Version};
