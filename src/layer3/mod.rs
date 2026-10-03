@@ -37,7 +37,8 @@ pub(crate) struct Scalefactors {
 }
 
 /// What the decoder found out about a frame's bit accounting (used by the
-/// strict checks in the tests and by [`crate::FrameInfo`]).
+/// strict checks of [`crate::DecoderOptions::strict`], and reported in
+/// [`crate::Frame::layer3`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Layer3Accounting {
     /// main_data_begin, bytes.

@@ -109,9 +109,7 @@ impl AllocTable {
         let per_channel = bitrate / channels as u32;
         if bitrate != 0 && per_channel <= 48_000 {
             if sample_rate == 32_000 { AllocTable::D } else { AllocTable::C }
-        } else if bitrate != 0 && per_channel <= 80_000 {
-            AllocTable::A
-        } else if sample_rate == 48_000 {
+        } else if (bitrate != 0 && per_channel <= 80_000) || sample_rate == 48_000 {
             AllocTable::A
         } else {
             AllocTable::B

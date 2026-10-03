@@ -86,11 +86,15 @@ pub struct LameTag {
 /// A parsed VBRI header.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VbriHeader {
+    /// Header version.
     pub version: u16,
     /// Encoder delay as the header states it.
     pub delay: u16,
+    /// Quality indicator.
     pub quality: u16,
+    /// MPEG audio bytes in the file.
     pub bytes: u32,
+    /// Audio frames in the file.
     pub frames: u32,
 }
 

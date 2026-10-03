@@ -138,7 +138,7 @@ pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bo
     }
     // count1: try both tables.
     let (mut bits_a, mut bits_b) = (0u32, 0u32);
-    for q in abs[c1..end].chunks_exact(4) {
+    for q in abs[c1..end].as_chunks::<4>().0 {
         let idx = (q[0] << 3 | q[1] << 2 | q[2] << 1 | q[3]) as usize;
         let signs = q.iter().filter(|&&v| v != 0).count() as u32;
         bits_a += u32::from(QUAD_A_LENS[idx]) + signs;
@@ -233,7 +233,7 @@ pub(crate) fn write(
         }
     }
     let (codes, lens) = if coding.count1_table_b { (&QUAD_B_CODES, &QUAD_B_LENS) } else { (&QUAD_A_CODES, &QUAD_A_LENS) };
-    for q in ix[big..big + usize::from(coding.count1_lines)].chunks_exact(4) {
+    for q in ix[big..big + usize::from(coding.count1_lines)].as_chunks::<4>().0 {
         let idx = (q[0].unsigned_abs() << 3 | q[1].unsigned_abs() << 2 | q[2].unsigned_abs() << 1 | q[3].unsigned_abs())
             as usize;
         w.put(u32::from(codes[idx]), u32::from(lens[idx]));

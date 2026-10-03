@@ -110,6 +110,9 @@ impl Bands {
 }
 
 /// The allowed noise of one granule of one channel.
+// The short variant is the larger (2 x 39 values against 2 x 22); masks
+// live a frame at a time, so boxing it would buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub(crate) enum Mask {
     /// Long, start and stop blocks: 22 long bands.

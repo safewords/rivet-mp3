@@ -10,7 +10,7 @@
 //!   chosen frame by frame) unless [`EncoderConfig::joint_stereo`] is off.
 //! - **Tools**: the polyphase analysis filterbank and MDCT of 11172-3
 //!   Annex C, long, start, short and stop blocks switched by a transient
-//!   detector, a psychoacoustic model ([`psy`]), quantisation against the
+//!   detector, a psychoacoustic model, quantisation against the
 //!   masking threshold with one noise-to-mask offset per frame chosen by
 //!   bisection against the bit budget, Huffman table and region selection.
 //! - **Gapless**: [`Encoder::tag_frame`] is a Xing (VBR) or Info (CBR)
@@ -134,6 +134,9 @@ fn vbr_setting(quality: u8) -> (f64, f64) {
     let q = f64::from(quality.min(9));
     (-4.0 + 1.6 * q, 20_000.0 - 700.0 * q)
 }
+
+/// A frame's quantised granules, [granule][channel].
+type FrameQuant = Vec<Vec<Quantised>>;
 
 /// One channel's analysis state.
 struct Channel {
@@ -690,11 +693,11 @@ impl Encoder {
     /// `target` bits (and every granule within 4095).
     fn fit(
         &self,
-        quantise_all: &dyn Fn(&Encoder, f64) -> Vec<Vec<Quantised>>,
-        total: &dyn Fn(&Vec<Vec<Quantised>>) -> (u32, bool),
-        at_zero: Vec<Vec<Quantised>>,
+        quantise_all: &dyn Fn(&Encoder, f64) -> FrameQuant,
+        total: &dyn Fn(&FrameQuant) -> (u32, bool),
+        at_zero: FrameQuant,
         target: u32,
-    ) -> Vec<Vec<Quantised>> {
+    ) -> FrameQuant {
         let fits = |q: &Vec<Vec<Quantised>>| {
             let (b, ok) = total(q);
             b <= target && ok

@@ -115,18 +115,6 @@ impl BitWriter {
         }
     }
 
-    /// Append another writer's bits.
-    pub(crate) fn append(&mut self, other: &BitWriter) {
-        let full = other.len() / 8;
-        for &b in &other.bytes[..full] {
-            self.put(u32::from(b), 8);
-        }
-        let rest = (other.len() % 8) as u32;
-        if rest > 0 {
-            self.put(u32::from(other.bytes[full] >> (8 - rest)), rest);
-        }
-    }
-
     pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }

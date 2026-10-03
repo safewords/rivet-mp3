@@ -391,6 +391,7 @@ pub(crate) fn write_scalefactors(w: &mut BitWriter, q: &Quantised, short: bool, 
 }
 
 /// The decoder's reconstruction of `q` (for measuring noise).
+#[cfg(test)]
 pub(crate) fn dequantise(q: &Quantised, sp: &Spectrum) -> [f32; 576] {
     let plan = plan(sp, 1.0);
     let short = sp.block_type == 2;

@@ -310,7 +310,7 @@ impl Decoder {
             {
                 let len = i - at;
                 let base = len - usize::from(h.padding) * h.slot_bytes();
-                if base % h.slot_bytes() == 0 {
+                if base.is_multiple_of(h.slot_bytes()) {
                     self.free_len = Some(base);
                     return Some(len);
                 }

@@ -9,34 +9,47 @@ use crate::header::{FrameHeader, Mode};
 /// One granule of one channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GranuleInfo {
+    /// Bits of scalefactors and Huffman data.
     pub part2_3_length: u16,
+    /// Pairs in the big_values region (at most 288).
     pub big_values: u16,
+    /// The quantiser step of the granule.
     pub global_gain: u8,
     /// 4 bits (MPEG-1) or 9 bits (LSF).
     pub scalefac_compress: u16,
+    /// A block type other than normal follows.
     pub window_switching: bool,
     /// 0 normal, 1 start, 2 short, 3 stop.
     pub block_type: u8,
+    /// The two lowest subbands are long in a short block.
     pub mixed_block: bool,
+    /// Huffman table per region.
     pub table_select: [u8; 3],
+    /// Short windows: gain offset per window (8 quarter-steps each).
     pub subblock_gain: [u8; 3],
+    /// Bands in region 0, less one.
     pub region0_count: u8,
+    /// Bands in region 1, less one.
     pub region1_count: u8,
     /// MPEG-1: transmitted; LSF: scalefac_compress >= 500 (not for the
     /// intensity-coded right channel).
     pub preflag: bool,
+    /// Scalefactors step by 2^1 rather than 2^0.5.
     pub scalefac_scale: bool,
+    /// count1 quadruples use table B.
     pub count1_table_b: bool,
 }
 
 /// A frame's side information.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SideInfo {
+    /// Bytes before this frame's main data where it starts (the reservoir).
     pub main_data_begin: usize,
+    /// Private bits.
     pub private_bits: u8,
-    /// MPEG-1 only: scfsi[ch][group].
+    /// MPEG-1 only: `scfsi[ch][group]`.
     pub scfsi: [[bool; 4]; 2],
-    /// [granule][channel]; LSF frames use granule 0 only.
+    /// `[granule][channel]`; LSF frames use granule 0 only.
     pub gr: [[GranuleInfo; 2]; 2],
 }
 

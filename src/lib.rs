@@ -14,6 +14,11 @@
 //! PCM on both sides is interleaved `f32` at full scale ±1.0, one or two
 //! channels.
 
+// Filterbanks, transforms and band loops index several arrays with one
+// counter; written as index loops they read like the standard's formulas.
+#![allow(clippy::needless_range_loop)]
+#![warn(missing_docs)]
+
 pub mod decode;
 pub mod encode;
 mod bits;

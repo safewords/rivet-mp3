@@ -101,7 +101,7 @@ pub(crate) fn decode_pairs(r: &mut BitReader, table_select: u8, out: &mut [i32])
     let t = tables();
     let tree = t.pairs[base].as_ref().expect("every base table has a tree");
     let xlen = pair_table(base).expect("base table").xlen;
-    for pair in out.chunks_exact_mut(2) {
+    for pair in out.as_chunks_mut::<2>().0 {
         let sym = tree.decode(r)?;
         let mut x = (sym / xlen) as i32;
         let mut y = (sym % xlen) as i32;
