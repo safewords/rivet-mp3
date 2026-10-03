@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use super::huffman::{self, Coding, MAX_VALUE};
 use super::psy::Mask;
 use crate::bits::BitWriter;
-use crate::tables::layer3::SLEN;
+use crate::tables::layer3::{PRETAB, SLEN};
 
 /// |ix|^(4/3) for every codable magnitude.
 fn pow43() -> &'static [f64] {
@@ -45,6 +45,8 @@ pub(crate) struct Quantised {
     pub(crate) ix: [i32; 576],
     pub(crate) global_gain: u8,
     pub(crate) scalefac_scale: bool,
+    /// MPEG-1 long blocks: pretab adds to the high bands' scalefactors.
+    pub(crate) preflag: bool,
     pub(crate) subblock_gain: [u8; 3],
     /// Long scalefactors (bands 0..21) or short ([band][window]).
     pub(crate) sf_l: [u8; 22],
@@ -68,6 +70,7 @@ impl Quantised {
             ix: [0; 576],
             global_gain: 0,
             scalefac_scale: false,
+            preflag: false,
             subblock_gain: [0; 3],
             sf_l: [0; 22],
             sf_s: [[0; 3]; 13],
@@ -181,11 +184,21 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
     // Band maxima of the scalefactor fields: 15 for the low bands (4 bits),
     // 7 for the high (3 bits) — MPEG-1 slen1 / slen2 and LSF slen0..3 alike.
     let sf_max = |b: usize| if (short && b < 6) || (!short && b < 11) { 15i32 } else { 7 };
-    let mut best: Option<Quantised> = None;
-    for scale_bit in [false, true] {
+    let mut best: Option<(bool, Quantised)> = None;
+    // Every combination of scalefac_scale and (MPEG-1 long blocks) preflag:
+    // each meets the allowances as far as its scalefactor range reaches; the
+    // one that clips least, then costs least, wins.
+    let variants: &[(bool, bool)] = if short || sp.lsf {
+        &[(false, false), (true, false)]
+    } else {
+        &[(false, false), (true, false), (false, true), (true, true)]
+    };
+    for &(scale_bit, pre) in variants {
         let m = if scale_bit { 4 } else { 2 };
+        let pretab = |b: usize| if pre && !short && b < 22 { i32::from(PRETAB[b]) } else { 0 };
         let mut q = Quantised::silent();
         q.scalefac_scale = scale_bit;
+        q.preflag = pre;
         // Per window (one "window" for long blocks): the coarsest required
         // step, capped so that the finest band can still reach its step with
         // the largest scalefactor.
@@ -200,12 +213,15 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
                 }
                 if let Some(s) = *r {
                     hi = hi.max(s);
-                    cap = cap.min(s + m * sf_max(b));
+                    cap = cap.min(s + m * (sf_max(b) + pretab(b)));
                 }
             }
             *bw = hi.min(cap);
         }
-        let top = base[..windows].iter().copied().max().unwrap_or(i32::MIN / 4).max(floor);
+        // No band needs coding: as coarse as the values allow (bands that
+        // need nothing must not pull the step down).
+        let required = base[..windows].iter().copied().max().filter(|&b| b > i32::MIN / 4).unwrap_or(45);
+        let top = required.max(floor);
         let mut gg = (top + 210).clamp(0, 255);
         let mut clipped = false;
         if short {
@@ -218,7 +234,7 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         for (&(_, _, _, w, b), r) in plan.bands.iter().zip(&req) {
             let Some(s) = *r else { continue };
             let base = gg - 210 - if short { 8 * i32::from(q.subblock_gain[w]) } else { 0 };
-            let need = (base - s + m - 1).div_euclid(m).max(0);
+            let need = ((base - s + m - 1).div_euclid(m) - pretab(b)).max(0);
             let sf = need.min(sf_max(b));
             clipped |= need > sf;
             if short {
@@ -239,17 +255,16 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         choose_scalefac_compress(&mut q, short, sp.lsf);
         let region1_ws = if short { 3 * usize::from(sp.short_edges[3]) } else { usize::from(sp.long_edges[8]) };
         q.coding = huffman::choose(&q.ix, sp.long_edges, sp.block_type != 0, region1_ws);
-        // A scale that holds every band beats one that clips; otherwise the
-        // cheaper.
-        let better = best.as_ref().is_none_or(|b| !clipped || q.bits() < b.bits());
+        let better = match &best {
+            None => true,
+            Some((bc, bq)) => (clipped, q.bits()) < (*bc, bq.bits()),
+        };
         if better {
-            best = Some(q);
-        }
-        if !clipped {
-            break;
+            best = Some((clipped, q));
         }
     }
-    best.expect("one scale tried")
+    best.expect("one variant tried").1
+
 }
 
 /// Quantise every line with the chosen parameters; false if a value
@@ -261,7 +276,7 @@ fn fill_values(q: &mut Quantised, plan: &BandPlan, x34: &[f64], short: bool) -> 
         let s = if short {
             gg - 210 - 8 * i32::from(q.subblock_gain[w]) - m * i32::from(q.sf_s[b][w])
         } else {
-            gg - 210 - m * i32::from(q.sf_l[b])
+            gg - 210 - m * (i32::from(q.sf_l[b]) + pre(q, b))
         };
         let qf = (-3.0 * f64::from(s) / 16.0).exp2();
         for i in lo..hi {
@@ -273,6 +288,11 @@ fn fill_values(q: &mut Quantised, plan: &BandPlan, x34: &[f64], short: bool) -> 
         }
     }
     true
+}
+
+/// The pretab amplification of long band `b` when preflag is set.
+fn pre(q: &Quantised, b: usize) -> i32 {
+    if q.preflag && b < 22 { i32::from(PRETAB[b]) } else { 0 }
 }
 
 /// Apply signs from the spectrum.
@@ -382,7 +402,7 @@ pub(crate) fn dequantise(q: &Quantised, sp: &Spectrum) -> [f32; 576] {
         let s = if short {
             gg - 210 - 8 * i32::from(q.subblock_gain[w]) - m * i32::from(q.sf_s[b][w])
         } else {
-            gg - 210 - m * i32::from(q.sf_l[b])
+            gg - 210 - m * (i32::from(q.sf_l[b]) + pre(q, b))
         };
         let g = (f64::from(s) / 4.0).exp2();
         for i in lo..hi {

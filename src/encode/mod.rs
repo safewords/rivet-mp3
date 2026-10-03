@@ -793,7 +793,7 @@ impl Encoder {
                     subblock_gain: qc.subblock_gain,
                     region0_count: qc.coding.region0_count,
                     region1_count: qc.coding.region1_count,
-                    preflag: false,
+                    preflag: qc.preflag,
                     scalefac_scale: qc.scalefac_scale,
                     count1_table_b: qc.coding.count1_table_b,
                 };
