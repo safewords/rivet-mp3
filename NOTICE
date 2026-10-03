@@ -1,0 +1,37 @@
+rivet-mp3 — an MPEG audio decoder (Layers I, II, III) and MP3 encoder
+Copyright 2026 Ely Erin Fox
+
+This product is licensed under the Open Encoding Attribution License,
+Version 1.0 (see LICENSE.md). It is source-available, not open source: the
+attribution duty in §5 applies to commercial use; §4 requires this NOTICE to
+be carried forward with any distribution.
+
+------------------------------------------------------------------------------
+Provenance
+------------------------------------------------------------------------------
+
+The encoder and decoder are original implementations written from ISO/IEC
+11172-3 (MPEG-1 audio) and ISO/IEC 13818-3 (MPEG-2 audio), the public
+descriptions of the MPEG-2.5 extension and of the Xing, LAME and VBRI tags,
+and published psychoacoustic literature. They are not translations of, and
+do not derive from, any other MPEG audio encoder's or decoder's source; none
+was read or run. The normative tables (Huffman codes, scalefactor bands,
+the synthesis window, Layer II allocation) are the standards' data;
+docs/PROVENANCE.md records each source and how the tables were verified.
+
+The decoder is verified against ISO's own conformance waveforms (ISO/IEC
+14496-26), used as data and not distributed here.
+
+------------------------------------------------------------------------------
+Patents
+------------------------------------------------------------------------------
+
+The principal MP3 patents are generally regarded as expired. This licence
+grants no rights under any patent, and the authors make no claim about
+whether a licence is needed for any use.
+
+------------------------------------------------------------------------------
+Third-party components
+------------------------------------------------------------------------------
+
+thiserror (https://crates.io/crates/thiserror) — MIT OR Apache-2.0
