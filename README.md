@@ -1,6 +1,6 @@
 # rivet-mp3
 
-[![CI](https://github.com/rivet-transcoder/rivet-mp3/actions/workflows/ci.yml/badge.svg)](https://github.com/rivet-transcoder/rivet-mp3/actions/workflows/ci.yml)
+[![CI](https://github.com/safewords/rivet-mp3/actions/workflows/ci.yml/badge.svg)](https://github.com/safewords/rivet-mp3/actions/workflows/ci.yml)
 
 An **MPEG audio decoder** (Layers I, II and III; MPEG-1, MPEG-2 lower
 sampling frequencies and MPEG-2.5) and an **MP3 (Layer III) encoder** in
@@ -10,7 +10,7 @@ from any other implementation. The decoder meets ISO's *full accuracy*
 criterion on every Layer I, II and III conformance sequence it was checked
 on — 64 of 64 (the figures are [below](#how-it-is-checked)).
 
-Written for the **[rivet](https://github.com/rivet-transcoder/rivet)**
+Written for the **[rivet](https://github.com/safewords/rivet)**
 transcoder, where it replaces minimp3 (decoding) and LAME (encoding). Usable
 on its own by anything that has MPEG audio bytes and wants PCM back, or PCM
 and wants MP3.
@@ -20,7 +20,7 @@ dependency (`thiserror`), no features, no build script.
 
 ```toml
 [dependencies]
-mp3 = { package = "rivet-mp3", git = "https://github.com/rivet-transcoder/rivet-mp3", branch = "develop" }
+mp3 = { package = "rivet-mp3", git = "https://github.com/safewords/rivet-mp3", branch = "develop" }
 ```
 
 ## What it decodes
