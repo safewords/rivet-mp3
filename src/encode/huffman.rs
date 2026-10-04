@@ -17,7 +17,9 @@ fn capacity(table: usize) -> u32 {
     }
 }
 
-/// Bits of one pair (absolute values `x`, `y`) in `table`, signs included.
+/// Bits of one pair (absolute values `x`, `y`) in `table`, signs included
+/// (the definition [`Costs`] is tested against).
+#[cfg(test)]
 fn pair_bits(table: usize, x: u32, y: u32) -> u32 {
     let Some((base, lin)) = TABLE_INFO[table] else { return u32::MAX / 4 };
     if base == 0 {
@@ -39,9 +41,8 @@ fn pair_bits(table: usize, x: u32, y: u32) -> u32 {
 
 /// The tables worth considering: every code table except the unused 4
 /// and 14 (and 0, which only zeros use).
-const CANDIDATES: [usize; 29] = [
-    1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-];
+const CANDIDATES: [usize; 29] =
+    [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
 
 /// How a granule's spectrum is to be Huffman coded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -57,35 +58,100 @@ pub(crate) struct Coding {
     pub(crate) bits: u32,
 }
 
-/// Prefix sums of pair costs per table over a granule's pairs; a pair a
-/// table cannot code costs [`INF`].
-struct Costs {
-    /// [candidate index][pair] cumulative bits, pairs + 1 entries each.
-    prefix: Vec<Vec<u64>>,
+/// The code tables behind the candidates: tables 16–23 share the code of
+/// 16 and 24–31 that of 24, differing only in linbits.
+const BASES: [usize; 15] = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 24];
+
+/// Per candidate: its index in [`BASES`], its linbits and the largest
+/// magnitude it codes.
+fn candidate_info() -> &'static [(usize, u32, u32); 29] {
+    static T: std::sync::OnceLock<[(usize, u32, u32); 29]> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let t = CANDIDATES[i];
+            let (base, lin) = TABLE_INFO[t].expect("a candidate is a code table");
+            (BASES.iter().position(|&b| b == base).expect("a base table"), lin, capacity(t))
+        })
+    })
 }
 
-const INF: u64 = 1 << 32;
+/// The bits of any range of a granule's pairs in any table, from prefix
+/// sums: a pair costs its code word in the table's code (shared by the
+/// tables of one base), linbits for each value of 15 or more, and a sign
+/// bit for each nonzero value; a table that cannot code the range's
+/// largest value is out. The same costs as pricing every pair in every
+/// table ([`pair_bits`]), which the unit test holds it to, at a fraction
+/// of the work.
+struct Costs {
+    /// Cumulative code-word bits, per pair boundary and base table (lane
+    /// `i` is `BASES[i]`, lane 15 unused); pairs a table cannot code count
+    /// 0 (the range maximum rules the table out there). Sixteen u16 lanes
+    /// per pair, so a pair's step is one vector add.
+    words: [[u16; 16]; 289],
+    /// Cumulative values of 15 or more (each takes linbits).
+    escapes: [u32; 289],
+    /// Cumulative nonzero values (each takes a sign bit).
+    signs: [u32; 289],
+    /// Range maximum: `max[l][p]` is the largest value of pairs
+    /// `p..p + 2^l`.
+    max: Vec<[u32; 288]>,
+}
+
+/// Code-word lengths by `min(x, 15) * 16 + min(y, 15)`, one lane per base
+/// table (0 where the table has no such pair).
+fn word_lengths() -> &'static [[u16; 16]; 256] {
+    static T: std::sync::OnceLock<[[u16; 16]; 256]> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut t = [[0u16; 16]; 256];
+        for (i, &base) in BASES.iter().enumerate() {
+            let pt = pair_table(base).expect("table");
+            for x in 0..pt.xlen {
+                for y in 0..pt.xlen {
+                    t[x * 16 + y][i] = u16::from(pt.lens[x * pt.xlen + y]);
+                }
+            }
+        }
+        t
+    })
+}
 
 impl Costs {
     fn new(abs: &[u32; 576], pairs: usize) -> Costs {
-        let prefix = CANDIDATES
-            .iter()
-            .map(|&t| {
-                let cap = capacity(t);
-                let mut v = Vec::with_capacity(pairs + 1);
-                v.push(0u64);
-                // A table too small for one value in the granule still
-                // serves regions without it.
-                let mut acc = 0u64;
-                for p in 0..pairs {
-                    let (x, y) = (abs[2 * p], abs[2 * p + 1]);
-                    acc += if x.max(y) > cap { INF } else { u64::from(pair_bits(t, x, y)) };
-                    v.push(acc);
-                }
-                v
-            })
-            .collect();
-        Costs { prefix }
+        let lens = word_lengths();
+        let mut words = [[0u16; 16]; 289];
+        let mut escapes = [0u32; 289];
+        let mut signs = [0u32; 289];
+        let mut level0 = [0u32; 288];
+        for p in 0..pairs {
+            let (x, y) = (abs[2 * p], abs[2 * p + 1]);
+            level0[p] = x.max(y);
+            escapes[p + 1] = escapes[p] + u32::from(x >= 15) + u32::from(y >= 15);
+            signs[p + 1] = signs[p] + u32::from(x != 0) + u32::from(y != 0);
+            let row = &lens[(x.min(15) * 16 + y.min(15)) as usize];
+            let prev = words[p];
+            for ((w, &a), &l) in words[p + 1].iter_mut().zip(&prev).zip(row) {
+                // At most 19 bits a pair, 288 pairs: no overflow.
+                *w = a + l;
+            }
+        }
+        let mut max = vec![level0];
+        let mut span = 1;
+        while 2 * span <= pairs {
+            let prev = max.last().expect("level 0");
+            let mut next = [0u32; 288];
+            for p in 0..=pairs - 2 * span {
+                next[p] = prev[p].max(prev[p + span]);
+            }
+            max.push(next);
+            span *= 2;
+        }
+        Costs { words, escapes, signs, max }
+    }
+
+    /// The largest value in pairs `pa..pb` (non-empty).
+    fn range_max(&self, pa: usize, pb: usize) -> u32 {
+        let l = (usize::BITS - 1 - (pb - pa).leading_zeros()) as usize;
+        self.max[l][pa].max(self.max[l][pb - (1 << l)])
     }
 
     /// The cheapest table for lines [a, b) (pairs a/2..b/2) and its bits;
@@ -95,27 +161,30 @@ impl Costs {
         if pa >= pb {
             return (0, 0);
         }
-        let mut best = (0u8, u64::MAX);
-        for (i, &t) in CANDIDATES.iter().enumerate() {
-            let bits = self.prefix[i][pb] - self.prefix[i][pa];
+        let top = self.range_max(pa, pb);
+        // All zero: table 0 codes it in no bits.
+        if top == 0 {
+            return (0, 0);
+        }
+        let escapes = self.escapes[pb] - self.escapes[pa];
+        let signs = self.signs[pb] - self.signs[pa];
+        let mut best = (0u8, u32::MAX);
+        // The candidates sharing a base table are adjacent and in rising
+        // linbits (and capacity): within a base, the first that can code
+        // the range costs least, and a later one could only tie, which the
+        // first already wins. So one candidate per base is priced.
+        let mut last_base = usize::MAX;
+        for (&t, &(bi, lin, cap)) in CANDIDATES.iter().zip(candidate_info()) {
+            if top > cap || bi == last_base {
+                continue;
+            }
+            last_base = bi;
+            let bits = u32::from(self.words[pb][bi] - self.words[pa][bi]) + lin * escapes + signs;
             if bits < best.1 {
                 best = (t as u8, bits);
             }
         }
-        // All zero: table 0 codes it in no bits. (Every candidate counts
-        // at least one bit per pair, so zero cost cannot come from them.)
-        let zero = (pa..pb).all(|p| self.is_zero_pair(p));
-        if zero {
-            return (0, 0);
-        }
-        (best.0, best.1.min(u64::from(u32::MAX / 2)) as u32)
-    }
-
-    fn is_zero_pair(&self, p: usize) -> bool {
-        // Table 1 codes (0, 0) in one bit and every other pair in more, with
-        // no sign bits: a pair costs exactly 1 there only when it is zero.
-        // (CANDIDATES[0] is table 1.)
-        self.prefix[0][p + 1] - self.prefix[0][p] == 1
+        (best.0, best.1.min(u32::MAX / 2))
     }
 }
 
@@ -148,12 +217,8 @@ pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bo
     let count1_bits = bits_a.min(bits_b);
     let pairs = c1 / 2;
     let costs = Costs::new(&abs, pairs);
-    let mut coding = Coding {
-        big_values: pairs as u16,
-        count1_table_b,
-        count1_lines: (end - c1) as u16,
-        ..Default::default()
-    };
+    let mut coding =
+        Coding { big_values: pairs as u16, count1_table_b, count1_lines: (end - c1) as u16, ..Default::default() };
     if window_switching {
         let r1 = region1_ws.min(c1);
         let (t0, b0) = costs.best(0, r1);
@@ -163,6 +228,8 @@ pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bo
         return coding;
     }
     let mut best = (u32::MAX, 0u8, 0u8, [0u8; 3]);
+    // Region 2 runs from a band edge to the end: one price per edge.
+    let mut tail: [Option<(u8, u32)>; 23] = [None; 23];
     for r0 in 0..16usize {
         let a = usize::from(sfb_long[r0 + 1]).min(c1);
         let (t0, b0) = costs.best(0, a);
@@ -170,9 +237,10 @@ pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bo
             continue;
         }
         for r1 in 0..8usize {
-            let b = usize::from(sfb_long[(r0 + r1 + 2).min(22)]).min(c1);
+            let edge = (r0 + r1 + 2).min(22);
+            let b = usize::from(sfb_long[edge]).min(c1);
             let (t1, b1) = costs.best(a, b);
-            let (t2, b2) = costs.best(b, c1);
+            let (t2, b2) = *tail[edge].get_or_insert_with(|| costs.best(b, c1));
             let total = b0 + b1 + b2;
             if total < best.0 {
                 best = (total, r0 as u8, r1 as u8, [t0, t1, t2]);
@@ -205,7 +273,8 @@ pub(crate) fn write(
                 .min(big),
         )
     };
-    let regions = [(0, r1, coding.table_select[0]), (r1, r2, coding.table_select[1]), (r2, big, coding.table_select[2])];
+    let regions =
+        [(0, r1, coding.table_select[0]), (r1, r2, coding.table_select[1]), (r2, big, coding.table_select[2])];
     for (a, b, table) in regions {
         let Some((base, lin)) = TABLE_INFO[usize::from(table)] else { continue };
         if base == 0 || a >= b {
@@ -232,7 +301,8 @@ pub(crate) fn write(
             }
         }
     }
-    let (codes, lens) = if coding.count1_table_b { (&QUAD_B_CODES, &QUAD_B_LENS) } else { (&QUAD_A_CODES, &QUAD_A_LENS) };
+    let (codes, lens) =
+        if coding.count1_table_b { (&QUAD_B_CODES, &QUAD_B_LENS) } else { (&QUAD_A_CODES, &QUAD_A_LENS) };
     for q in ix[big..big + usize::from(coding.count1_lines)].as_chunks::<4>().0 {
         let idx = (q[0].unsigned_abs() << 3 | q[1].unsigned_abs() << 2 | q[2].unsigned_abs() << 1 | q[3].unsigned_abs())
             as usize;
@@ -247,3 +317,62 @@ pub(crate) fn write(
 
 /// Largest magnitude any table can code (15 + 2^13 - 1).
 pub(crate) const MAX_VALUE: u32 = 8206;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The definition: every pair priced in every table, a table that
+    /// cannot code a pair of the range costing "infinity".
+    fn best_by_pairs(abs: &[u32; 576], a: usize, b: usize) -> (u8, u32) {
+        let (pa, pb) = (a / 2, b / 2);
+        if pa >= pb || (pa..pb).all(|p| abs[2 * p] == 0 && abs[2 * p + 1] == 0) {
+            return (0, 0);
+        }
+        let mut best = (0u8, u64::MAX);
+        for &t in &CANDIDATES {
+            let cap = capacity(t);
+            let bits: u64 = (pa..pb)
+                .map(|p| {
+                    let (x, y) = (abs[2 * p], abs[2 * p + 1]);
+                    if x.max(y) > cap { 1 << 32 } else { u64::from(pair_bits(t, x, y)) }
+                })
+                .sum();
+            if bits < best.1 {
+                best = (t as u8, bits);
+            }
+        }
+        (best.0, best.1.min(u64::from(u32::MAX / 2)) as u32)
+    }
+
+    #[test]
+    fn range_costs_match_pricing_every_pair() {
+        let mut seed = 77u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed >> 8
+        };
+        for case in 0..60 {
+            let mut abs = [0u32; 576];
+            // Mostly small values with some large ones, like a spectrum
+            // falling off with frequency.
+            let pairs = 1 + (next() as usize % 288);
+            for (i, v) in abs.iter_mut().enumerate().take(2 * pairs) {
+                let r = next();
+                *v = match (case % 4, r % 100) {
+                    (0, _) => r % 2,
+                    (_, 0..=2) => r % (MAX_VALUE + 1),
+                    (_, 3..=10) => 15 + r % 40,
+                    _ => (r % 16) >> (i * 4 / 576),
+                };
+            }
+            let costs = Costs::new(&abs, pairs);
+            for _ in 0..200 {
+                let x = next() as usize % (2 * pairs + 1);
+                let y = next() as usize % (2 * pairs + 1);
+                let (a, b) = (x.min(y), x.max(y));
+                assert_eq!(costs.best(a, b), best_by_pairs(&abs, a, b), "case {case} lines {a}..{b}");
+            }
+        }
+    }
+}

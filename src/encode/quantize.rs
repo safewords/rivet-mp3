@@ -27,10 +27,43 @@ fn pow43() -> &'static [f64] {
     T.get_or_init(|| (0..=MAX_VALUE as usize + 1).map(|i| (i as f64).powf(4.0 / 3.0)).collect())
 }
 
+/// A spectrum's magnitudes and their 3/4 powers, which every quantisation
+/// of it starts from: computed once per spectrum, not once per trial.
+pub(crate) struct Lines {
+    xa: [f64; 576],
+    x34: [f64; 576],
+}
+
+impl Lines {
+    pub(crate) fn new(xr: &[f32; 576]) -> Box<Lines> {
+        let mut l = Box::new(Lines { xa: [0.0; 576], x34: [0.0; 576] });
+        for ((a, c), &v) in l.xa.iter_mut().zip(l.x34.iter_mut()).zip(xr) {
+            *a = f64::from(v).abs();
+            *c = a.powf(0.75);
+        }
+        l
+    }
+}
+
+/// The quantiser's two step factors for an integer quarter-step exponent
+/// `s`: 2^(-3s/16) (applied to |x|^(3/4)) and 2^(s/4) (the step itself),
+/// from a table over the exponents that occur, the entries the same
+/// expressions' values.
+fn steps(s: i32) -> (f64, f64) {
+    const LO: i32 = -1024;
+    static T: OnceLock<Vec<(f64, f64)>> = OnceLock::new();
+    let compute = |s: i32| ((-3.0 * f64::from(s) / 16.0).exp2(), (f64::from(s) / 4.0).exp2());
+    let t = T.get_or_init(|| (LO..1024).map(compute).collect());
+    match s.checked_sub(LO).and_then(|i| t.get(i as usize)) {
+        Some(&v) => v,
+        None => compute(s),
+    }
+}
+
 /// One granule-channel's spectrum ready to quantise.
 pub(crate) struct Spectrum<'a> {
-    /// Lines in bitstream order (short blocks: band, window, line).
-    pub(crate) xr: &'a [f32; 576],
+    /// The lines, in bitstream order (short blocks: band, window, line).
+    pub(crate) lines: &'a Lines,
     /// 0 normal, 1 start, 2 short, 3 stop.
     pub(crate) block_type: u8,
     pub(crate) mask: &'a Mask,
@@ -116,8 +149,7 @@ fn plan(sp: &Spectrum, scale: f64) -> BandPlan {
 /// 2^(s/4).
 fn noise(xa: &[f64], x34: &[f64], s: i32) -> f64 {
     let p = pow43();
-    let q = (-3.0 * f64::from(s) / 16.0).exp2();
-    let g = (f64::from(s) / 4.0).exp2();
+    let (q, g) = steps(s);
     let mut n = 0.0;
     for (&a, &c) in xa.iter().zip(x34) {
         let ix = ((c * q + 0.4054) as usize).min(MAX_VALUE as usize);
@@ -138,8 +170,7 @@ fn s_floor(xmax: f64) -> i32 {
 
 /// Quantise with every band's allowed noise multiplied by `scale`.
 pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
-    let xa: Vec<f64> = sp.xr.iter().map(|&v| f64::from(v).abs()).collect();
-    let x34: Vec<f64> = xa.iter().map(|&v| v.powf(0.75)).collect();
+    let (xa, x34) = (&sp.lines.xa, &sp.lines.x34);
     let plan = plan(sp, scale);
     let short = sp.block_type == 2;
     // Required step per band: None for a band that may be quantised to
@@ -247,7 +278,7 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         // floor allows): raise the global step until all are codable.
         loop {
             q.global_gain = gg as u8;
-            if fill_values(&mut q, &plan, &x34, short) || gg >= 255 {
+            if fill_values(&mut q, &plan, x34, short) || gg >= 255 {
                 break;
             }
             gg += 1;
@@ -264,7 +295,6 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         }
     }
     best.expect("one variant tried").1
-
 }
 
 /// Quantise every line with the chosen parameters; false if a value
@@ -278,7 +308,7 @@ fn fill_values(q: &mut Quantised, plan: &BandPlan, x34: &[f64], short: bool) -> 
         } else {
             gg - 210 - m * (i32::from(q.sf_l[b]) + pre(q, b))
         };
-        let qf = (-3.0 * f64::from(s) / 16.0).exp2();
+        let qf = steps(s).0;
         for i in lo..hi {
             let v = x34[i] * qf + 0.4054;
             if v >= f64::from(MAX_VALUE) + 1.0 {
@@ -314,7 +344,8 @@ fn choose_scalefac_compress(q: &mut Quantised, short: bool, lsf: bool) {
         // Table row 0 of 13818-3: four groups (6, 5, 5, 5 long bands; 3
         // short bands, i.e. 9 values, each); slen0, slen1 up to 4 bits,
         // slen2, slen3 up to 3.
-        let groups: [(usize, usize); 4] = if short { [(0, 3), (3, 6), (6, 9), (9, 12)] } else { [(0, 6), (6, 11), (11, 16), (16, 21)] };
+        let groups: [(usize, usize); 4] =
+            if short { [(0, 3), (3, 6), (6, 9), (9, 12)] } else { [(0, 6), (6, 11), (11, 16), (16, 21)] };
         let mut slen = [0u8; 4];
         for (g, &(a, b)) in groups.iter().enumerate() {
             let max = if short {
@@ -332,10 +363,7 @@ fn choose_scalefac_compress(q: &mut Quantised, short: bool, lsf: bool) {
         return;
     }
     let (lo_max, hi_max) = if short {
-        (
-            (0..6).flat_map(|b| q.sf_s[b]).max().unwrap_or(0),
-            (6..12).flat_map(|b| q.sf_s[b]).max().unwrap_or(0),
-        )
+        ((0..6).flat_map(|b| q.sf_s[b]).max().unwrap_or(0), (6..12).flat_map(|b| q.sf_s[b]).max().unwrap_or(0))
     } else {
         (q.sf_l[..11].iter().copied().max().unwrap_or(0), q.sf_l[11..21].iter().copied().max().unwrap_or(0))
     };

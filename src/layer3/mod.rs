@@ -214,11 +214,16 @@ impl Layer3 {
         }
         // Antialias: all boundaries for long blocks, only the first for
         // mixed blocks, none for short.
-        let bounds = if !short { 31 } else if gi.mixed_block { 1 } else { 0 };
+        let bounds = if !short {
+            31
+        } else if gi.mixed_block {
+            1
+        } else {
+            0
+        };
+        let (cs_all, ca_all) = antialias_coefficients();
         for sb in 1..=bounds {
-            for (i, &c) in CI.iter().enumerate() {
-                let cs = 1.0 / (1.0 + c * c).sqrt();
-                let ca = c / (1.0 + c * c).sqrt();
+            for (i, (&cs, &ca)) in cs_all.iter().zip(ca_all).enumerate() {
                 let bu = f64::from(x[18 * sb - 1 - i]);
                 let bd = f64::from(x[18 * sb + i]);
                 x[18 * sb - 1 - i] = (bu * cs - bd * ca) as f32;
@@ -232,7 +237,14 @@ impl Layer3 {
             // decoder's output for l3_10203 has it so).
             let bt = if gi.mixed_block && sb < 2 { 0 } else { gi.block_type };
             let mut y = [0.0f64; 36];
-            imdct::imdct(&x[sb * 18..sb * 18 + 18], bt, &mut y);
+            let xs = &x[sb * 18..sb * 18 + 18];
+            if xs.iter().all(|&v| v.to_bits() == 0) {
+                // All +0.0, as every band above the last coded one is: the
+                // transform of zeros, kept from the same computation.
+                y = imdct::zero_output(bt);
+            } else {
+                imdct::imdct(xs, bt, &mut y);
+            }
             let ov = &mut self.overlap[ch][sb];
             for i in 0..18 {
                 let mut v = y[i] + ov[i];
@@ -245,6 +257,18 @@ impl Layer3 {
             }
         }
     }
+}
+
+/// The antialias butterflies' cs_i = 1 / sqrt(1 + c_i^2) and
+/// ca_i = c_i / sqrt(1 + c_i^2) (2.4.3.4.10.1), computed once.
+fn antialias_coefficients() -> &'static ([f64; 8], [f64; 8]) {
+    static T: std::sync::OnceLock<([f64; 8], [f64; 8])> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        (
+            std::array::from_fn(|i| 1.0 / (1.0 + CI[i] * CI[i]).sqrt()),
+            std::array::from_fn(|i| CI[i] / (1.0 + CI[i] * CI[i]).sqrt()),
+        )
+    })
 }
 
 /// MPEG-1 scalefactors (2.4.2.7, scale_factors()).
@@ -446,9 +470,17 @@ fn pow2_quarter(q: i32) -> f64 {
     (f64::from(q) * 0.25).exp2()
 }
 
-/// |is|^(4/3) with the sign of `is`.
+/// |is|^(4/3) with the sign of `is`; from a table for every magnitude
+/// the Huffman codes reach (15 + 2^13 - 1), whose entries are the same
+/// `powf` values.
 pub(crate) fn pow43(v: i32) -> f64 {
-    let a = f64::from(v.unsigned_abs()).powf(4.0 / 3.0);
+    static T: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    let t = T.get_or_init(|| (0..=8206u32).map(|i| f64::from(i).powf(4.0 / 3.0)).collect());
+    let m = v.unsigned_abs();
+    let a = match t.get(m as usize) {
+        Some(&a) => a,
+        None => f64::from(m).powf(4.0 / 3.0),
+    };
     if v < 0 { -a } else { a }
 }
 
@@ -460,11 +492,7 @@ fn requantise(is: &[i32; 576], gi: &GranuleInfo, sf: &Scalefactors, rate: usize,
     xr.fill(0.0);
     let shift = if gi.scalefac_scale { 2 } else { 1 }; // sfm in quarter-steps / 2
     let gg = i32::from(gi.global_gain) - 210;
-    let long_end = if gi.block_type == 2 {
-        if gi.mixed_block { mixed_long_bands(rate) } else { 0 }
-    } else {
-        22
-    };
+    let long_end = if gi.block_type == 2 { if gi.mixed_block { mixed_long_bands(rate) } else { 0 } } else { 22 };
     // Long part.
     for b in 0..long_end {
         let lo = usize::from(SFB_LONG[rate][b]);
@@ -608,8 +636,10 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
                 let from = (0..long_bands).find(|&b| usize::from(SFB_LONG[rate][b]) >= nz).unwrap_or(long_bands);
                 for b in from..long_bands {
                     let kk = k(sf.l[b], sf.max_l[b]);
-                    for line in
-                        is_lines.iter_mut().take(usize::from(SFB_LONG[rate][b + 1])).skip(usize::from(SFB_LONG[rate][b]))
+                    for line in is_lines
+                        .iter_mut()
+                        .take(usize::from(SFB_LONG[rate][b + 1]))
+                        .skip(usize::from(SFB_LONG[rate][b]))
                     {
                         *line = kk;
                     }
@@ -619,11 +649,8 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
             let nz = g.nonzero[1];
             let from = (0..22).find(|&b| usize::from(SFB_LONG[rate][b]) >= nz).unwrap_or(22);
             for b in from..22 {
-                let kk = if b == 21 {
-                    last_band(&k, from <= 20, sf.l[20], sf.max_l[20])
-                } else {
-                    k(sf.l[b], sf.max_l[b])
-                };
+                let kk =
+                    if b == 21 { last_band(&k, from <= 20, sf.l[20], sf.max_l[20]) } else { k(sf.l[b], sf.max_l[b]) };
                 for line in
                     is_lines.iter_mut().take(usize::from(SFB_LONG[rate][b + 1])).skip(usize::from(SFB_LONG[rate][b]))
                 {

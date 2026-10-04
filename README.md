@@ -71,6 +71,45 @@ one to resample other input to), mono or stereo:
 Left out, all optional for an encoder: intensity stereo, mixed blocks,
 scfsi, free format, Layer I and II encoding.
 
+## Speed
+
+On a Ryzen 9 9950X (Windows, a shared machine, best of five), in multiples
+of real time, for 60 s of a 16-bit stereo 44.1 kHz album track;
+`cargo run --release --example bench -- <pcm.raw>` measures it on any
+16-bit stereo 44.1 kHz raw PCM.
+
+| | before | now |
+|---|---|---|
+| decode 128 kb/s CBR | 264 | 670 |
+| decode 320 kb/s CBR | 198 | 647 |
+| encode 128 kb/s CBR (one thread / threaded) | 6.7 | 13.3 / 20.8 |
+| encode 320 kb/s CBR | 4.9 | 11.5 / 19.2 |
+| encode VBR quality 2 | 22 | 29 / 39 |
+
+Decoding: the Huffman codes resolve their first 10 bits in one table
+lookup; |is|^(4/3) comes from a table; subbands above the last coded line
+skip the IMDCT (their output, zeros' transform, is kept); the IMDCT and the
+synthesis filterbank's matrixing and windowing compute their outputs side
+by side, which vectorises (x86-64 builds them for the baseline and for
+AVX2, picked at run time; aarch64 uses NEON); and `Decoder` no longer moves
+its whole input down once per frame, which made decoding a large buffer
+at once quadratic. Encoding: the Huffman table and region search prices
+ranges from per-table prefix sums instead of pricing every pair in every
+table; the 3/4 powers and step factors are computed once; and the frames
+an `encode` call completes are analysed and first quantised in parallel,
+with each rate-control trial quantising its granules and channels on
+separate threads (`Encoder::set_threads`; 1 keeps everything on the
+caller's thread).
+
+**Same output everywhere.** No fused multiply-add, and every vectorised
+sum adds its terms in the order of the plain loop, so the decoder's output
+and the encoder's stream are the same to the bit on every CPU, on every
+code path (the `force-scalar` feature compiles the run-time selection
+out; CI tests both ways, and on arm64), at every thread count — and the
+same as before this work: the encoded streams' hashes and the decoded
+output of every ISO conformance stream are unchanged, and unit tests hold
+each rewritten kernel to the loop it replaced.
+
 ## How it is checked
 
 - **ISO conformance** (`tests/conformance.rs`): the MPEG-1/2 audio

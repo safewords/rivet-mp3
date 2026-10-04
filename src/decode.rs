@@ -7,8 +7,8 @@
 
 use crate::error::{Result, invalid};
 use crate::header::{FrameHeader, Layer};
-use crate::layer12::{self, Subbands};
 use crate::layer3::{Layer3, Layer3Accounting};
+use crate::layer12::{self, Subbands};
 use crate::synth::Synth;
 use crate::xing::{self, DECODER_DELAY, InfoHeader};
 
@@ -191,6 +191,10 @@ pub struct Decoder {
     opts: DecoderOptions,
     frames: FrameDecoder,
     buf: Vec<u8>,
+    /// Bytes of `buf` already consumed: the data starts at `buf[head..]`
+    /// (dropped from the front only now and then, so a large input is not
+    /// moved down once per frame).
+    head: usize,
     /// Stream position of `buf[0]`.
     base: u64,
     /// The header of the last frame accepted (sync is established).
@@ -231,6 +235,7 @@ impl Decoder {
             opts,
             frames: FrameDecoder::new().check_crc(opts.check_crc || opts.strict),
             buf: Vec::new(),
+            head: 0,
             base: 0,
             locked: None,
             free_len: None,
@@ -280,11 +285,31 @@ impl Decoder {
         Ok(out)
     }
 
+    /// The buffered bytes not yet consumed.
+    fn data(&self) -> &[u8] {
+        &self.buf[self.head..]
+    }
+
+    /// Consume the first `n` buffered bytes.
+    fn consume(&mut self, n: usize) {
+        debug_assert!(n <= self.data().len());
+        self.head += n;
+        if self.head >= 1 << 16 && self.head * 2 >= self.buf.len() {
+            self.buf.drain(..self.head);
+            self.head = 0;
+        }
+    }
+
+    fn clear_buf(&mut self) {
+        self.buf.clear();
+        self.head = 0;
+    }
+
     fn skip(&mut self, n: usize) -> Result<()> {
         if self.opts.strict && n > 0 && self.locked.is_some() {
             return Err(invalid(format!("{n} bytes between frames at {}", self.base)));
         }
-        self.buf.drain(..n);
+        self.consume(n);
         self.base += n as u64;
         self.skipped_bytes += n as u64;
         Ok(())
@@ -302,9 +327,9 @@ impl Decoder {
         // Find the next header of the same free-format stream.
         let min = h.header_len() + 4;
         let mut i = at + min;
-        while i + 4 <= self.buf.len() && i < at + MAX_FRAME {
-            if self.buf[i] == 0xFF
-                && let Ok(n) = FrameHeader::parse(&self.buf[i..])
+        while i + 4 <= self.data().len() && i < at + MAX_FRAME {
+            if self.data()[i] == 0xFF
+                && let Ok(n) = FrameHeader::parse(&self.data()[i..])
                 && n.same_stream(h)
                 && n.mode == h.mode
             {
@@ -317,57 +342,57 @@ impl Decoder {
             }
             i += 1;
         }
-        if at_end && self.buf.len() > at + min { Some(self.buf.len() - at) } else { None }
+        if at_end && self.data().len() > at + min { Some(self.data().len() - at) } else { None }
     }
 
     fn drain(&mut self, at_end: bool) -> Result<Vec<Frame>> {
         let mut out = Vec::new();
         loop {
             // ID3v2 tag.
-            if self.buf.len() < 10 && self.buf.starts_with(b"ID3") && !at_end {
+            if self.data().len() < 10 && self.data().starts_with(b"ID3") && !at_end {
                 break;
             }
-            if self.buf.len() >= 10 && &self.buf[..3] == b"ID3" {
-                let s = &self.buf[6..10];
+            if self.data().len() >= 10 && &self.data()[..3] == b"ID3" {
+                let s = &self.data()[6..10];
                 if s.iter().all(|&b| b < 0x80) {
                     let size = (usize::from(s[0]) << 21)
                         | (usize::from(s[1]) << 14)
                         | (usize::from(s[2]) << 7)
                         | usize::from(s[3]);
-                    let footer = if self.buf[5] & 0x10 != 0 { 10 } else { 0 };
+                    let footer = if self.data()[5] & 0x10 != 0 { 10 } else { 0 };
                     let total = 10 + size + footer;
-                    if self.buf.len() < total {
+                    if self.data().len() < total {
                         if at_end {
-                            let n = self.buf.len();
-                            self.buf.clear();
+                            let n = self.data().len();
+                            self.clear_buf();
                             self.base += n as u64;
                             self.skipped_bytes += n as u64;
                         }
                         break;
                     }
-                    self.buf.drain(..total);
+                    self.consume(total);
                     self.base += total as u64;
                     self.skipped_bytes += total as u64;
                     continue;
                 }
             }
-            if self.buf.starts_with(b"ID3") {
+            if self.data().starts_with(b"ID3") {
                 // Not a valid tag header: step over the three bytes.
-                self.buf.drain(..3);
+                self.consume(3);
                 self.base += 3;
                 self.skipped_bytes += 3;
                 continue;
             }
             // Sync search.
-            let Some(start) = self.buf.windows(2).position(|w| w[0] == 0xFF && w[1] & 0xE0 == 0xE0) else {
-                let keep = usize::from(self.buf.last() == Some(&0xFF));
-                let n = self.buf.len() - keep;
-                if n > 0 && !(self.buf.len() >= 3 && &self.buf[..3] == b"ID3") {
+            let Some(start) = self.data().windows(2).position(|w| w[0] == 0xFF && w[1] & 0xE0 == 0xE0) else {
+                let keep = usize::from(self.data().last() == Some(&0xFF));
+                let n = self.data().len() - keep;
+                if n > 0 && !(self.data().len() >= 3 && &self.data()[..3] == b"ID3") {
                     // Trailing ID3v1 / APE tags end up here too.
                     if self.opts.strict && self.locked.is_some() && !at_end {
                         return Err(invalid(format!("{n} bytes between frames at {}", self.base)));
                     }
-                    self.buf.drain(..n);
+                    self.consume(n);
                     self.base += n as u64;
                     self.skipped_bytes += n as u64;
                 }
@@ -375,28 +400,28 @@ impl Decoder {
             };
             if start > 0 {
                 // Allow an ID3 tag to be recognised.
-                let id3 = self.buf[..start].windows(3).position(|w| w == b"ID3");
+                let id3 = self.data()[..start].windows(3).position(|w| w == b"ID3");
                 let cut = id3.filter(|&p| p > 0).unwrap_or(start);
                 if cut > 0 {
                     if self.opts.strict && self.locked.is_some() && !self.is_trailing_tag(at_end) {
                         return Err(invalid(format!("{cut} bytes between frames at {}", self.base)));
                     }
-                    self.buf.drain(..cut);
+                    self.consume(cut);
                     self.base += cut as u64;
                     self.skipped_bytes += cut as u64;
                 }
                 continue;
             }
-            if self.buf.len() < 4 {
+            if self.data().len() < 4 {
                 if at_end {
-                    let n = self.buf.len();
-                    self.buf.clear();
+                    let n = self.data().len();
+                    self.clear_buf();
                     self.base += n as u64;
                     self.skipped_bytes += n as u64;
                 }
                 break;
             }
-            let h = match FrameHeader::parse(&self.buf) {
+            let h = match FrameHeader::parse(self.data()) {
                 Ok(h) if self.locked.is_none_or(|l| l.same_stream(&h)) => h,
                 _ => {
                     self.skip(1)?;
@@ -404,7 +429,7 @@ impl Decoder {
                 }
             };
             let Some(len) = self.frame_len(&h, 0, at_end) else {
-                if self.buf.len() > MAX_FRAME {
+                if self.data().len() > MAX_FRAME {
                     self.skip(1)?;
                     continue;
                 }
@@ -414,21 +439,21 @@ impl Decoder {
                 self.skip(1)?;
                 continue;
             }
-            if self.buf.len() < len {
+            if self.data().len() < len {
                 if at_end {
                     // A truncated last frame: decode what there is, padded.
-                    if self.locked.is_some() && self.buf.len() > h.header_len() + 8 {
-                        let mut f = self.buf.clone();
+                    if self.locked.is_some() && self.data().len() > h.header_len() + 8 {
+                        let mut f = self.data().to_vec();
                         f.resize(len, 0);
-                        let n = self.buf.len();
-                        self.buf.clear();
+                        let n = self.data().len();
+                        self.clear_buf();
                         self.base += n as u64;
                         if let Ok(frame) = self.frames.decode_frame(&f) {
                             self.emit(frame, &mut out)?;
                         }
                     } else {
-                        let n = self.buf.len();
-                        self.buf.clear();
+                        let n = self.data().len();
+                        self.clear_buf();
                         self.base += n as u64;
                         self.skipped_bytes += n as u64;
                     }
@@ -437,12 +462,12 @@ impl Decoder {
             }
             // Confirm against the next header unless already locked.
             if self.locked.is_none() {
-                if self.buf.len() < len + 4 {
+                if self.data().len() < len + 4 {
                     if !at_end {
                         break;
                     }
                 } else {
-                    match FrameHeader::parse(&self.buf[len..]) {
+                    match FrameHeader::parse(&self.data()[len..]) {
                         Ok(n) if n.same_stream(&h) => {}
                         _ => {
                             self.skip(1)?;
@@ -451,9 +476,9 @@ impl Decoder {
                     }
                 }
             }
-            let frame_bytes: Vec<u8> = self.buf[..len].to_vec();
+            let frame_bytes: Vec<u8> = self.data()[..len].to_vec();
             let position = self.base;
-            self.buf.drain(..len);
+            self.consume(len);
             self.base += len as u64;
             self.locked = Some(h);
             if !self.first_done {
@@ -497,17 +522,15 @@ impl Decoder {
     }
 
     fn is_trailing_tag(&self, _at_end: bool) -> bool {
-        self.buf.starts_with(b"TAG") || self.buf.starts_with(b"APETAGEX") || self.buf.starts_with(b"LYRICS")
+        self.data().starts_with(b"TAG") || self.data().starts_with(b"APETAGEX") || self.data().starts_with(b"LYRICS")
     }
 
     fn set_info(&mut self, info: InfoHeader, h: &FrameHeader) {
         if let Some((delay, padding)) = info.delay_padding() {
             let spf = h.samples() as u64;
-            let length = info
-                .frames()
-                .map(|f| (u64::from(f) * spf).saturating_sub(u64::from(delay) + u64::from(padding)));
-            self.gapless =
-                Some(Gapless { encoder_delay: delay, padding, skip_start: delay + DECODER_DELAY, length });
+            let length =
+                info.frames().map(|f| (u64::from(f) * spf).saturating_sub(u64::from(delay) + u64::from(padding)));
+            self.gapless = Some(Gapless { encoder_delay: delay, padding, skip_start: delay + DECODER_DELAY, length });
         }
         self.info = Some(info);
     }

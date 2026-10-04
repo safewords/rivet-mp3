@@ -18,6 +18,13 @@ use std::sync::OnceLock;
 pub(crate) struct Tables {
     /// cos table for n = 36: [i * 18 + k].
     pub(crate) cos36: Vec<f64>,
+    /// The same, transposed: [k][i], so the IMDCT runs its 36 outputs side
+    /// by side.
+    cos36_t: [[f64; 36]; 18],
+    /// The n = 12 table transposed: [k][i].
+    cos12_t: [[f64; 12]; 6],
+    /// [`imdct`] of 18 zeros (+0.0) for each block type.
+    zero: [[f64; 36]; 4],
     /// cos table for n = 12: [i * 6 + k].
     pub(crate) cos12: Vec<f64>,
     /// Long windows by block type (index 2 unused: short).
@@ -63,31 +70,69 @@ pub(crate) fn tables() -> &'static Tables {
         for (i, w) in win_short.iter_mut().enumerate() {
             *w = (PI / 12.0 * (i as f64 + 0.5)).sin();
         }
-        Tables { cos36, cos12, win, win_short }
+        let cos36_t = std::array::from_fn(|k| std::array::from_fn(|i| cos36[i * 18 + k]));
+        let cos12_t = std::array::from_fn(|k| std::array::from_fn(|i| cos12[i * 6 + k]));
+        let mut t = Tables { cos36, cos12, cos36_t, cos12_t, zero: [[0.0; 36]; 4], win, win_short };
+        for bt in 0..4u8 {
+            let mut z = [0.0; 36];
+            imdct_with(&t, &[0.0; 18], bt, &mut z);
+            t.zero[usize::from(bt)] = z;
+        }
+        t
     })
+}
+
+/// [`imdct`] of 18 zeros for `block_type`: what a subband above the last
+/// coded line transforms to (the sign of each zero included).
+pub(crate) fn zero_output(block_type: u8) -> [f64; 36] {
+    tables().zero[usize::from(block_type)]
 }
 
 /// Inverse transform and window one subband's 18 values for `block_type`
 /// (for short blocks `x` holds the three windows' six values each,
 /// window-major), giving 36 windowed samples.
+///
+/// Each output's sum runs over k in order from -0.0 (as `Iterator::sum`
+/// does) with separate multiplies and adds; the outputs are computed side
+/// by side, which vectorises without changing any of them.
 pub(crate) fn imdct(x: &[f32], block_type: u8, out: &mut [f64; 36]) {
-    let t = tables();
+    imdct_dispatch(tables(), x, block_type, out);
+}
+
+crate::simd::multiversion! {
+fn imdct_dispatch(t: &Tables, x: &[f32], block_type: u8, out: &mut [f64; 36]) {
+    imdct_with(t, x, block_type, out)
+}
+}
+
+#[inline(always)]
+fn imdct_with(t: &Tables, x: &[f32], block_type: u8, out: &mut [f64; 36]) {
     if block_type == 2 {
         out.fill(0.0);
         for w in 0..3 {
             let xs = &x[w * 6..w * 6 + 6];
+            let mut s = [-0.0f64; 12];
+            for (col, &v) in t.cos12_t.iter().zip(xs) {
+                let v = f64::from(v);
+                for (s, &c) in s.iter_mut().zip(col) {
+                    *s += c * v;
+                }
+            }
             for i in 0..12 {
-                let row = &t.cos12[i * 6..i * 6 + 6];
-                let s: f64 = row.iter().zip(xs).map(|(&c, &v)| c * f64::from(v)).sum();
-                out[6 + 6 * w + i] += s * t.win_short[i];
+                out[6 + 6 * w + i] += s[i] * t.win_short[i];
             }
         }
     } else {
         let win = &t.win[usize::from(block_type)];
-        for i in 0..36 {
-            let row = &t.cos36[i * 18..i * 18 + 18];
-            let s: f64 = row.iter().zip(x).map(|(&c, &v)| c * f64::from(v)).sum();
-            out[i] = s * win[i];
+        let mut s = [-0.0f64; 36];
+        for (col, &v) in t.cos36_t.iter().zip(x) {
+            let v = f64::from(v);
+            for (s, &c) in s.iter_mut().zip(col) {
+                *s += c * v;
+            }
+        }
+        for ((o, &s), &w) in out.iter_mut().zip(&s).zip(win) {
+            *o = s * w;
         }
     }
 }
@@ -124,6 +169,58 @@ pub(crate) fn mdct(x: &[f64; 36], block_type: u8, out: &mut [f32; 18]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The IMDCT as first written (one output's dot product at a time),
+    /// which the side-by-side form must match to the bit.
+    fn imdct_by_rows(x: &[f32], block_type: u8, out: &mut [f64; 36]) {
+        let t = tables();
+        if block_type == 2 {
+            out.fill(0.0);
+            for w in 0..3 {
+                let xs = &x[w * 6..w * 6 + 6];
+                for i in 0..12 {
+                    let row = &t.cos12[i * 6..i * 6 + 6];
+                    let s: f64 = row.iter().zip(xs).map(|(&c, &v)| c * f64::from(v)).sum();
+                    out[6 + 6 * w + i] += s * t.win_short[i];
+                }
+            }
+        } else {
+            let win = &t.win[usize::from(block_type)];
+            for i in 0..36 {
+                let row = &t.cos36[i * 18..i * 18 + 18];
+                let s: f64 = row.iter().zip(x).map(|(&c, &v)| c * f64::from(v)).sum();
+                out[i] = s * win[i];
+            }
+        }
+    }
+
+    #[test]
+    fn side_by_side_imdct_is_the_row_by_row_one_to_the_bit() {
+        let mut seed = 9u32;
+        for case in 0..400 {
+            let x: Vec<f32> = (0..18)
+                .map(|k| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    match case % 5 {
+                        // Zeros of both signs, and sparse spectra.
+                        0 => 0.0,
+                        1 => -0.0,
+                        2 if k % 3 != 0 => 0.0,
+                        _ => (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5,
+                    }
+                })
+                .collect();
+            for bt in 0..4u8 {
+                let (mut a, mut b) = ([0.0; 36], [0.0; 36]);
+                imdct(&x, bt, &mut a);
+                imdct_by_rows(&x, bt, &mut b);
+                assert_eq!(a.map(f64::to_bits), b.map(f64::to_bits), "case {case} block type {bt}");
+                if x.iter().all(|v| v.to_bits() == 0) {
+                    assert_eq!(zero_output(bt).map(f64::to_bits), b.map(f64::to_bits));
+                }
+            }
+        }
+    }
 
     /// The IMDCT against its definition, evaluated literally.
     #[test]

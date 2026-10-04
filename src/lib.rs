@@ -27,6 +27,7 @@ mod error;
 pub mod header;
 mod layer12;
 pub mod layer3;
+mod simd;
 mod synth;
 mod tables;
 pub mod xing;

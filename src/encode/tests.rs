@@ -504,8 +504,9 @@ fn quantiser_meets_the_allowance() {
     }
     let (mut over, mut total) = (0, 0);
     for gr in enc.frame_granules.iter().filter(|g| g.block_type == 0) {
+        let lines = quantize::Lines::new(&gr.xr[0]);
         let sp = quantize::Spectrum {
-            xr: &gr.xr[0],
+            lines: &lines,
             block_type: 0,
             mask: &gr.mask[0],
             long_edges: &SFB_LONG[0],

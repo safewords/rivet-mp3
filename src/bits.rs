@@ -61,8 +61,13 @@ impl<'a> BitReader<'a> {
     /// The next `n` (1..=32) bits without consuming them; bits past the end
     /// of the data read as zero.
     pub(crate) fn peek_unchecked(&self, n: u32) -> u32 {
-        let mut v: u64 = 0;
         let byte = self.pos / 8;
+        if let Some(b) = self.data.get(byte..byte + 8) {
+            // One load: at least 57 bits from the position on.
+            let w = u64::from_be_bytes(b.try_into().expect("8 bytes")) << (self.pos % 8);
+            return (w >> (64 - n)) as u32;
+        }
+        let mut v: u64 = 0;
         for i in 0..5 {
             v = (v << 8) | u64::from(*self.data.get(byte + i).unwrap_or(&0));
         }

@@ -28,6 +28,7 @@ mod quantize;
 mod tests;
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::bits::BitWriter;
 use crate::crc::frame_crc_bits;
@@ -204,6 +205,90 @@ pub struct Encoder {
     flushed: bool,
     padding: u32,
     bitrate_sum: u64,
+    /// Threads for a batch of frames; 0 is the machine's count.
+    threads: usize,
+    /// The quantiser threads, once started.
+    pool: Option<QuantPool>,
+}
+
+/// A frame's work that does not depend on the frames before it: the
+/// stereo decision, the spectra and the first quantisation the rate
+/// control starts from. Frames of one batch prepare in parallel.
+struct Prepared {
+    grs: Vec<Granule>,
+    ms: bool,
+    work: Arc<FrameWork>,
+    /// The quantisation at the mask (CBR) or at the quality's offset (VBR).
+    first: FrameQuant,
+}
+
+/// What quantising a frame needs, shared with the quantiser threads: the
+/// spectra to code (granule-major, then channel), their masks and lines.
+struct FrameWork {
+    items: Vec<WorkItem>,
+    /// Channels coded per granule.
+    nch: usize,
+    long_edges: [u16; 23],
+    short_edges: [u16; 14],
+    lsf: bool,
+}
+
+struct WorkItem {
+    xr: [f32; 576],
+    mask: Mask,
+    lines: Box<quantize::Lines>,
+    block_type: u8,
+}
+
+impl FrameWork {
+    /// Item `i` quantised with every band's allowance times `scale`.
+    fn quantise(&self, i: usize, scale: f64) -> Quantised {
+        let it = &self.items[i];
+        let sp = Spectrum {
+            lines: &it.lines,
+            block_type: it.block_type,
+            mask: &it.mask,
+            long_edges: &self.long_edges,
+            short_edges: &self.short_edges,
+            lsf: self.lsf,
+        };
+        let mut q = quantize::quantise(&sp, scale);
+        quantize::apply_signs(&mut q, &it.xr);
+        q
+    }
+}
+
+/// Threads that quantise a frame's granules and channels side by side
+/// during the rate control's search (each trial quantises them all, and
+/// the trials themselves follow one from the other). Started on first
+/// use; they end when the encoder is dropped.
+struct QuantPool {
+    jobs: mpsc::Sender<(Arc<FrameWork>, usize, f64)>,
+    /// Behind a lock only so the encoder stays `Sync`; one thread reads it.
+    done: Mutex<mpsc::Receiver<(usize, Quantised)>>,
+}
+
+impl QuantPool {
+    fn new(workers: usize) -> QuantPool {
+        let (jobs, job_rx) = mpsc::channel::<(Arc<FrameWork>, usize, f64)>();
+        let (done_tx, done) = mpsc::channel();
+        let job_rx = Arc::new(Mutex::new(job_rx));
+        for _ in 0..workers {
+            let job_rx = Arc::clone(&job_rx);
+            let done_tx = done_tx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    // The lock is held only to take a job, not to run it.
+                    let job = job_rx.lock().map_or(Err(mpsc::RecvError), |rx| rx.recv());
+                    let Ok((work, i, scale)) = job else { return };
+                    if done_tx.send((i, work.quantise(i, scale))).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        QuantPool { jobs, done: Mutex::new(done) }
+    }
 }
 
 fn crc16_arc_update(mut crc: u16, data: &[u8]) -> u16 {
@@ -309,7 +394,17 @@ impl Encoder {
             flushed: false,
             padding: 0,
             bitrate_sum: 0,
+            threads: 0,
+            pool: None,
         })
+    }
+
+    /// How many threads prepare a batch of frames (the frames one
+    /// [`encode`](Self::encode) call completes): 0, the default, is one per
+    /// CPU; 1 does everything on the caller's thread. The stream is the
+    /// same byte for byte whatever the count.
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads;
     }
 
     /// Samples per channel per frame: 1152 (MPEG-1) or 576.
@@ -396,6 +491,7 @@ impl Encoder {
         } else {
             u64::MAX
         };
+        let mut batch: Vec<Vec<Granule>> = Vec::new();
         loop {
             let g = self.next_granule;
             if at_end && g >= total_frames * self.ngr as u64 {
@@ -410,8 +506,7 @@ impl Encoder {
             self.analyse_granule(g);
             self.next_granule += 1;
             if self.frame_granules.len() == self.ngr {
-                let grs = std::mem::take(&mut self.frame_granules);
-                self.encode_frame(grs, out);
+                batch.push(std::mem::take(&mut self.frame_granules));
             }
             // Drop input no longer needed: the next granule's analysis starts
             // at 576 (g + 1), and every later attack region after it.
@@ -423,6 +518,18 @@ impl Encoder {
                 }
                 self.input_base += cut as u64;
             }
+        }
+        // The frames' independent work in parallel, then the rate control
+        // and the reservoir in order.
+        let threads =
+            if self.threads == 0 { std::thread::available_parallelism().map_or(1, usize::from) } else { self.threads };
+        let prepared = parallel_map(batch, threads, |grs| self.prepare(grs));
+        if threads > 1 && self.pool.is_none() && !prepared.is_empty() {
+            // One thread per granule-channel beyond the caller's.
+            self.pool = Some(QuantPool::new((self.ngr * self.nch - 1).min(threads - 1)));
+        }
+        for p in prepared {
+            self.encode_frame(p, out);
         }
         if at_end {
             self.padding = (total_frames * self.spf as u64 - u64::from(ENCODER_DELAY) - self.samples_in) as u32;
@@ -566,7 +673,7 @@ impl Encoder {
         field.min((7680 / 8usize).saturating_sub(frame_bytes))
     }
 
-    fn encode_frame(&mut self, grs: Vec<Granule>, out: &mut Vec<Vec<u8>>) {
+    fn prepare(&self, grs: Vec<Granule>) -> Prepared {
         let nch = self.nch;
         // Mid/side decision for the frame.
         let ms = nch == 2 && self.cfg.joint_stereo && self.choose_ms(&grs);
@@ -589,30 +696,58 @@ impl Encoder {
             }
             spectra.push(v);
         }
-        let quantise_all = |enc: &Encoder, offset_db: f64| -> Vec<Vec<Quantised>> {
-            let scale = 10f64.powf(offset_db / 10.0);
-            spectra
-                .iter()
-                .zip(&grs)
-                .map(|(v, g)| {
-                    v.iter()
-                        .map(|(xr, mask)| {
-                            let sp = Spectrum {
-                                xr,
-                                block_type: g.block_type,
-                                mask,
-                                long_edges: &enc.long_edges,
-                                short_edges: &enc.short_edges,
-                                lsf: enc.lsf,
-                            };
-                            let mut q = quantize::quantise(&sp, scale);
-                            quantize::apply_signs(&mut q, xr);
-                            q
-                        })
-                        .collect()
+        let items = spectra
+            .into_iter()
+            .zip(&grs)
+            .flat_map(|(v, g)| {
+                v.into_iter().map(|(xr, mask)| WorkItem {
+                    lines: quantize::Lines::new(&xr),
+                    xr,
+                    mask,
+                    block_type: g.block_type,
                 })
-                .collect()
+            })
+            .collect();
+        let work = Arc::new(FrameWork {
+            items,
+            nch,
+            long_edges: self.long_edges,
+            short_edges: self.short_edges,
+            lsf: self.lsf,
+        });
+        let offset = match self.cfg.bitrate {
+            BitrateMode::Cbr(_) => 0.0,
+            BitrateMode::Vbr(_) => self.vbr_offset_db,
         };
+        let first = quantise_serial(&work, offset);
+        Prepared { grs, ms, work, first }
+    }
+
+    /// Quantise every granule and channel of a frame with every band's
+    /// allowed noise raised by `offset_db`: on the quantiser threads too
+    /// when there are any, the result the same either way.
+    fn quantise_frame(&self, work: &Arc<FrameWork>, offset_db: f64) -> FrameQuant {
+        let Some(pool) = &self.pool else { return quantise_serial(work, offset_db) };
+        let scale = 10f64.powf(offset_db / 10.0);
+        let n = work.items.len();
+        // Items 1.. go to the threads; this thread takes item 0.
+        for i in 1..n {
+            pool.jobs.send((Arc::clone(work), i, scale)).expect("quantiser threads run while the encoder lives");
+        }
+        let mut out: Vec<Option<Quantised>> = vec![None; n];
+        out[0] = Some(work.quantise(0, scale));
+        let done = pool.done.lock().expect("one reader");
+        for _ in 1..n {
+            let (i, q) = done.recv().expect("quantiser threads run while the encoder lives");
+            out[i] = Some(q);
+        }
+        let mut items = out.into_iter().map(|q| q.expect("every item quantised"));
+        (0..n / work.nch).map(|_| items.by_ref().take(work.nch).collect()).collect()
+    }
+
+    fn encode_frame(&mut self, p: Prepared, out: &mut Vec<Vec<u8>>) {
+        let Prepared { grs, ms, work, first } = p;
+        let quantise_all = |enc: &Encoder, offset_db: f64| -> FrameQuant { enc.quantise_frame(&work, offset_db) };
         let total = |q: &Vec<Vec<Quantised>>| -> (u32, bool) {
             let mut sum = 0;
             let mut ok = true;
@@ -649,7 +784,7 @@ impl Encoder {
                 let avail = 8 * (self.free_tail + slot) as u32;
                 let mean = 8 * slot as u32;
                 // Demand: the bits that just meet the mask.
-                let at_mask = quantise_all(self, 0.0);
+                let at_mask = first;
                 let demand = total(&at_mask).0;
                 let room = 8 * resv_max.saturating_sub(self.free_tail) as u32; // reservoir space left
                 let target = if demand > mean {
@@ -664,7 +799,7 @@ impl Encoder {
                 (q, index)
             }
             BitrateMode::Vbr(_) => {
-                let q0 = quantise_all(self, self.vbr_offset_db);
+                let q0 = first;
                 let need = total(&q0).0;
                 // Smallest bit rate whose frame, with half the reservoir,
                 // holds the frame's bits.
@@ -678,11 +813,7 @@ impl Encoder {
                 }
                 let slot = self.slot_bytes(pick, false);
                 let avail = 8 * (self.free_tail + slot) as u32;
-                let q = if need <= avail && total(&q0).1 {
-                    q0
-                } else {
-                    self.fit(&quantise_all, &total, q0, avail)
-                };
+                let q = if need <= avail && total(&q0).1 { q0 } else { self.fit(&quantise_all, &total, q0, avail) };
                 (q, pick)
             }
         };
@@ -950,4 +1081,39 @@ impl Encoder {
         );
         frame
     }
+}
+
+/// `f` over `items`, in order, on up to `threads` threads (the calling
+/// thread among them), each taking the next item as it finishes one.
+fn parallel_map<T: Send, R: Send>(items: Vec<T>, threads: usize, f: impl Fn(T) -> R + Sync) -> Vec<R> {
+    let n = items.len();
+    if threads <= 1 || n <= 1 {
+        return items.into_iter().map(f).collect();
+    }
+    let queue = std::sync::Mutex::new(items.into_iter().enumerate());
+    let work = || {
+        let mut done = Vec::new();
+        loop {
+            let next = queue.lock().expect("work queue").next();
+            let Some((i, item)) = next else { return done };
+            done.push((i, f(item)));
+        }
+    };
+    let mut all: Vec<(usize, R)> = std::thread::scope(|s| {
+        let helpers: Vec<_> = (1..threads.min(n)).map(|_| s.spawn(work)).collect();
+        let mut all = work();
+        for h in helpers {
+            all.extend(h.join().expect("an encoder thread panicked"));
+        }
+        all
+    });
+    all.sort_unstable_by_key(|(i, _)| *i);
+    all.into_iter().map(|(_, r)| r).collect()
+}
+
+/// [`Encoder::quantise_frame`] on the calling thread alone.
+fn quantise_serial(work: &FrameWork, offset_db: f64) -> FrameQuant {
+    let scale = 10f64.powf(offset_db / 10.0);
+    let mut items = (0..work.items.len()).map(|i| work.quantise(i, scale));
+    (0..work.items.len() / work.nch).map(|_| items.by_ref().take(work.nch).collect()).collect()
 }
