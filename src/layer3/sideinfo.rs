@@ -100,7 +100,11 @@ impl SideInfo {
                     }
                     // Implicit region counts (only used for reporting; the
                     // decoder derives the boundaries directly).
-                    g.region0_count = if g.block_type == 2 && !g.mixed_block { 8 } else { 7 };
+                    g.region0_count = if g.block_type == 2 && !g.mixed_block {
+                        8
+                    } else {
+                        7
+                    };
                     g.region1_count = 36;
                 } else {
                     for t in 0..3 {
@@ -110,7 +114,8 @@ impl SideInfo {
                     g.region1_count = r.read(3)? as u8;
                 }
                 if lsf {
-                    let intensity_right = ch == 1 && h.mode == Mode::JointStereo && h.mode_extension & 1 == 1;
+                    let intensity_right =
+                        ch == 1 && h.mode == Mode::JointStereo && h.mode_extension & 1 == 1;
                     g.preflag = !intensity_right && g.scalefac_compress >= 500;
                 } else {
                     g.preflag = r.bit()?;

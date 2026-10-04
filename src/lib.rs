@@ -19,10 +19,10 @@
 #![allow(clippy::needless_range_loop)]
 #![warn(missing_docs)]
 
-pub mod decode;
-pub mod encode;
 mod bits;
 mod crc;
+pub mod decode;
+pub mod encode;
 mod error;
 pub mod header;
 mod layer12;

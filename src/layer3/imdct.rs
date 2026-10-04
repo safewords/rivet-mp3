@@ -39,7 +39,8 @@ pub(crate) fn tables() -> &'static Tables {
         let mut cos36 = vec![0.0; 36 * 18];
         for i in 0..36 {
             for k in 0..18 {
-                cos36[i * 18 + k] = (PI / 72.0 * (2 * i + 1 + 18) as f64 * (2 * k + 1) as f64).cos();
+                cos36[i * 18 + k] =
+                    (PI / 72.0 * (2 * i + 1 + 18) as f64 * (2 * k + 1) as f64).cos();
             }
         }
         let mut cos12 = vec![0.0; 12 * 6];
@@ -72,7 +73,15 @@ pub(crate) fn tables() -> &'static Tables {
         }
         let cos36_t = std::array::from_fn(|k| std::array::from_fn(|i| cos36[i * 18 + k]));
         let cos12_t = std::array::from_fn(|k| std::array::from_fn(|i| cos12[i * 6 + k]));
-        let mut t = Tables { cos36, cos12, cos36_t, cos12_t, zero: [[0.0; 36]; 4], win, win_short };
+        let mut t = Tables {
+            cos36,
+            cos12,
+            cos36_t,
+            cos12_t,
+            zero: [[0.0; 36]; 4],
+            win,
+            win_short,
+        };
         for bt in 0..4u8 {
             let mut z = [0.0; 36];
             imdct_with(&t, &[0.0; 18], bt, &mut z);
@@ -214,7 +223,11 @@ mod tests {
                 let (mut a, mut b) = ([0.0; 36], [0.0; 36]);
                 imdct(&x, bt, &mut a);
                 imdct_by_rows(&x, bt, &mut b);
-                assert_eq!(a.map(f64::to_bits), b.map(f64::to_bits), "case {case} block type {bt}");
+                assert_eq!(
+                    a.map(f64::to_bits),
+                    b.map(f64::to_bits),
+                    "case {case} block type {bt}"
+                );
                 if x.iter().all(|v| v.to_bits() == 0) {
                     assert_eq!(zero_output(bt).map(f64::to_bits), b.map(f64::to_bits));
                 }
@@ -231,7 +244,10 @@ mod tests {
         imdct(&x, 0, &mut out);
         for i in 0..36 {
             let want: f64 = (0..18)
-                .map(|k| f64::from(x[k]) * (PI / 72.0 * (2 * i + 1 + 18) as f64 * (2 * k + 1) as f64).cos())
+                .map(|k| {
+                    f64::from(x[k])
+                        * (PI / 72.0 * (2 * i + 1 + 18) as f64 * (2 * k + 1) as f64).cos()
+                })
                 .sum::<f64>()
                 * (PI / 36.0 * (i as f64 + 0.5)).sin();
             assert!((out[i] - want).abs() < 1e-12, "{i}");
@@ -244,7 +260,10 @@ mod tests {
         // Window 0 alone contributes to 6..12.
         for i in 0..6 {
             let want: f64 = (0..6)
-                .map(|k| f64::from(x[k]) * (PI / 24.0 * (2 * i + 1 + 6) as f64 * (2 * k + 1) as f64).cos())
+                .map(|k| {
+                    f64::from(x[k])
+                        * (PI / 24.0 * (2 * i + 1 + 6) as f64 * (2 * k + 1) as f64).cos()
+                })
                 .sum::<f64>()
                 * (PI / 12.0 * (i as f64 + 0.5)).sin();
             assert!((out[6 + i] - want).abs() < 1e-12, "{i}");
@@ -273,15 +292,26 @@ mod tests {
     /// every legal block-type sequence.
     #[test]
     fn perfect_reconstruction() {
-        let signal: Vec<f64> = (0..18 * 6).map(|i| ((i * 37 % 23) as f64 - 11.0) / 13.0).collect();
-        for seq in [[0, 0, 0, 0, 0], [0, 1, 2, 3, 0], [0, 1, 2, 2, 3], [3, 0, 1, 2, 3]] {
+        let signal: Vec<f64> = (0..18 * 6)
+            .map(|i| ((i * 37 % 23) as f64 - 11.0) / 13.0)
+            .collect();
+        for seq in [
+            [0, 0, 0, 0, 0],
+            [0, 1, 2, 3, 0],
+            [0, 1, 2, 2, 3],
+            [3, 0, 1, 2, 3],
+        ] {
             let mut prev = [0.0f64; 18];
             let mut rec = vec![0.0; signal.len()];
             for (g, &bt) in seq.iter().enumerate() {
                 let mut block = [0.0f64; 36];
                 for i in 0..36 {
                     let n = g * 18 + i;
-                    block[i] = if n >= 18 && n - 18 < signal.len() { signal[n - 18] } else { 0.0 };
+                    block[i] = if n >= 18 && n - 18 < signal.len() {
+                        signal[n - 18]
+                    } else {
+                        0.0
+                    };
                 }
                 let mut c = [0.0f32; 18];
                 mdct(&block, bt, &mut c);
@@ -297,7 +327,12 @@ mod tests {
             // Granules 1..=3 of the output are fully overlapped: input
             // granules 0..=2.
             for n in 18..18 * 4 {
-                assert!((rec[n] - signal[n - 18]).abs() < 1e-5, "{seq:?} {n}: {} vs {}", rec[n], signal[n - 18]);
+                assert!(
+                    (rec[n] - signal[n - 18]).abs() < 1e-5,
+                    "{seq:?} {n}: {} vs {}",
+                    rec[n],
+                    signal[n - 18]
+                );
             }
         }
     }

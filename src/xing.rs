@@ -166,7 +166,10 @@ pub fn parse(frame: &[u8], h: &FrameHeader) -> Option<InfoHeader> {
 }
 
 fn parse_xing(frame: &[u8], at: usize) -> Option<XingHeader> {
-    let mut x = XingHeader { is_info: &frame[at..at + 4] == b"Info", ..Default::default() };
+    let mut x = XingHeader {
+        is_info: &frame[at..at + 4] == b"Info",
+        ..Default::default()
+    };
     let flags = be32(frame.get(at + 4..at + 8)?);
     let mut p = at + 8;
     if flags & 1 != 0 {
@@ -191,12 +194,15 @@ fn parse_xing(frame: &[u8], at: usize) -> Option<XingHeader> {
         // An encoder string of printable ASCII marks the extension (LAME
         // and encoders that copy its layout write one).
         let enc = &t[..9];
-        if enc.iter().take(4).all(|&c| c.is_ascii_alphanumeric()) && enc.iter().all(|&c| c == 0 || (32..127).contains(&c))
+        if enc.iter().take(4).all(|&c| c.is_ascii_alphanumeric())
+            && enc.iter().all(|&c| c == 0 || (32..127).contains(&c))
         {
             let dp = &t[21..24];
             let stored = be16(&t[34..]);
             x.lame = Some(LameTag {
-                encoder: String::from_utf8_lossy(enc).trim_end_matches('\0').to_string(),
+                encoder: String::from_utf8_lossy(enc)
+                    .trim_end_matches('\0')
+                    .to_string(),
                 revision: t[9] >> 4,
                 vbr_method: t[9] & 15,
                 lowpass: u32::from(t[10]) * 100,

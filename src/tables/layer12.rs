@@ -22,10 +22,26 @@ pub(crate) struct QuantClass {
 
 const fn q(steps: u32) -> QuantClass {
     match steps {
-        3 => QuantClass { steps, bits: 5, grouped: true },
-        5 => QuantClass { steps, bits: 7, grouped: true },
-        9 => QuantClass { steps, bits: 10, grouped: true },
-        _ => QuantClass { steps, bits: bits_for(steps), grouped: false },
+        3 => QuantClass {
+            steps,
+            bits: 5,
+            grouped: true,
+        },
+        5 => QuantClass {
+            steps,
+            bits: 7,
+            grouped: true,
+        },
+        9 => QuantClass {
+            steps,
+            bits: 10,
+            grouped: true,
+        },
+        _ => QuantClass {
+            steps,
+            bits: bits_for(steps),
+            grouped: false,
+        },
     }
 }
 
@@ -62,21 +78,25 @@ pub(crate) struct AllocRow {
     pub(crate) classes: &'static [QuantClass],
 }
 
+#[rustfmt::skip]
 const R_A0: [QuantClass; 15] = [
     q(3), q(7), q(15), q(31), q(63), q(127), q(255), q(511), q(1023), q(2047), q(4095), q(8191), q(16383),
     q(32767), q(65535),
 ];
+#[rustfmt::skip]
 const R_A1: [QuantClass; 15] = [
     q(3), q(5), q(7), q(9), q(15), q(31), q(63), q(127), q(255), q(511), q(1023), q(2047), q(4095), q(8191),
     q(65535),
 ];
 const R_A2: [QuantClass; 7] = [q(3), q(5), q(7), q(9), q(15), q(31), q(65535)];
 const R_A3: [QuantClass; 3] = [q(3), q(5), q(65535)];
+#[rustfmt::skip]
 const R_C0: [QuantClass; 15] = [
     q(3), q(5), q(9), q(15), q(31), q(63), q(127), q(255), q(511), q(1023), q(2047), q(4095), q(8191), q(16383),
     q(32767),
 ];
 const R_C1: [QuantClass; 7] = [q(3), q(5), q(9), q(15), q(31), q(63), q(127)];
+#[rustfmt::skip]
 const R_L0: [QuantClass; 15] = [
     q(3), q(5), q(7), q(9), q(15), q(31), q(63), q(127), q(255), q(511), q(1023), q(2047), q(4095), q(8191),
     q(16383),
@@ -108,7 +128,11 @@ impl AllocTable {
         }
         let per_channel = bitrate / channels as u32;
         if bitrate != 0 && per_channel <= 48_000 {
-            if sample_rate == 32_000 { AllocTable::D } else { AllocTable::C }
+            if sample_rate == 32_000 {
+                AllocTable::D
+            } else {
+                AllocTable::C
+            }
         } else if (bitrate != 0 && per_channel <= 80_000) || sample_rate == 48_000 {
             AllocTable::A
         } else {
@@ -167,7 +191,9 @@ mod tests {
         assert_eq!(q(65535).bits, 16);
         assert_eq!(q(9).sample_bits(), 4);
         // Every class is symmetric about its middle code.
-        for steps in [3, 5, 7, 9, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535] {
+        for steps in [
+            3, 5, 7, 9, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535,
+        ] {
             let c = q(steps);
             let a = c.dequantise(0);
             let b = c.dequantise(steps - 1);

@@ -33,7 +33,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use crate::bits::BitWriter;
 use crate::crc::frame_crc_bits;
 use crate::error::{Result, config};
-use crate::header::{BITRATES_LSF, BITRATES_MPEG1, FrameHeader, Layer, Mode, SAMPLE_RATES, Version};
+use crate::header::{
+    BITRATES_LSF, BITRATES_MPEG1, FrameHeader, Layer, Mode, SAMPLE_RATES, Version,
+};
 use crate::layer3::imdct::mdct;
 use crate::layer3::sideinfo::{GranuleInfo, SideInfo};
 use crate::tables::layer3::{SFB_LONG, SFB_SHORT, rate_index};
@@ -96,7 +98,8 @@ pub fn coding_rate(input: u32) -> u32 {
     if all.clone().any(|r| r == input) {
         return input;
     }
-    all.min_by_key(|&r| (i64::from(r) - i64::from(input)).abs()).unwrap_or(44_100)
+    all.min_by_key(|&r| (i64::from(r) - i64::from(input)).abs())
+        .unwrap_or(44_100)
 }
 
 /// The encoder string of the tag (nine bytes).
@@ -287,7 +290,10 @@ impl QuantPool {
                 }
             });
         }
-        QuantPool { jobs, done: Mutex::new(done) }
+        QuantPool {
+            jobs,
+            done: Mutex::new(done),
+        }
     }
 }
 
@@ -295,7 +301,11 @@ fn crc16_arc_update(mut crc: u16, data: &[u8]) -> u16 {
     for &b in data {
         crc ^= u16::from(b);
         for _ in 0..8 {
-            crc = if crc & 1 == 1 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xA001
+            } else {
+                crc >> 1
+            };
         }
     }
     crc
@@ -318,11 +328,18 @@ impl Encoder {
                 ))
             })?;
         if !(1..=2).contains(&cfg.channels) {
-            return Err(config(format!("MP3 carries one or two channels, not {}", cfg.channels)));
+            return Err(config(format!(
+                "MP3 carries one or two channels, not {}",
+                cfg.channels
+            )));
         }
         let version = [Version::Mpeg1, Version::Mpeg2, Version::Mpeg25][vi];
         let lsf = vi != 0;
-        let table = if lsf { &BITRATES_LSF[2] } else { &BITRATES_MPEG1[2] };
+        let table = if lsf {
+            &BITRATES_LSF[2]
+        } else {
+            &BITRATES_MPEG1[2]
+        };
         let vbr_offset_db;
         let lowpass;
         let nch = usize::from(cfg.channels);
@@ -332,11 +349,20 @@ impl Encoder {
                     return Err(config(format!(
                         "{b} bit/s is not a {} Layer III bit rate ({} kbit/s)",
                         if lsf { "MPEG-2/2.5" } else { "MPEG-1" },
-                        table[1..].iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+                        table[1..]
+                            .iter()
+                            .map(u32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )));
                 }
                 vbr_offset_db = 0.0;
-                let per = f64::from(b) / 1000.0 / nch as f64 * if nch == 2 && cfg.joint_stereo { 1.15 } else { 1.0 };
+                let per = f64::from(b) / 1000.0 / nch as f64
+                    * if nch == 2 && cfg.joint_stereo {
+                        1.15
+                    } else {
+                        1.0
+                    };
                 lowpass = default_lowpass(per);
             }
             BitrateMode::Vbr(q) => {
@@ -348,7 +374,10 @@ impl Encoder {
                 lowpass = lp;
             }
         }
-        let lowpass = cfg.lowpass.map_or(lowpass, f64::from).min(f64::from(cfg.sample_rate) * 0.5);
+        let lowpass = cfg
+            .lowpass
+            .map_or(lowpass, f64::from)
+            .min(f64::from(cfg.sample_rate) * 0.5);
         let rate = rate_index(vi, si);
         let long_edges = SFB_LONG[rate];
         let short_edges = SFB_SHORT[rate];
@@ -521,8 +550,11 @@ impl Encoder {
         }
         // The frames' independent work in parallel, then the rate control
         // and the reservoir in order.
-        let threads =
-            if self.threads == 0 { std::thread::available_parallelism().map_or(1, usize::from) } else { self.threads };
+        let threads = if self.threads == 0 {
+            std::thread::available_parallelism().map_or(1, usize::from)
+        } else {
+            self.threads
+        };
         let prepared = parallel_map(batch, threads, |grs| self.prepare(grs));
         if threads > 1 && self.pool.is_none() && !prepared.is_empty() {
             // One thread per granule-channel beyond the caller's.
@@ -532,7 +564,9 @@ impl Encoder {
             self.encode_frame(p, out);
         }
         if at_end {
-            self.padding = (total_frames * self.spf as u64 - u64::from(ENCODER_DELAY) - self.samples_in) as u32;
+            self.padding = (total_frames * self.spf as u64
+                - u64::from(ENCODER_DELAY)
+                - self.samples_in) as u32;
         }
     }
 
@@ -573,7 +607,9 @@ impl Encoder {
             let base = 576 * g as i64;
             let mut slots = [[0.0f64; 32]; 18];
             for (t, slot) in slots.iter_mut().enumerate() {
-                let input: Vec<f32> = (0..32).map(|i| self.sample(ch, base + 32 * t as i64 + i)).collect();
+                let input: Vec<f32> = (0..32)
+                    .map(|i| self.sample(ch, base + 32 * t as i64 + i))
+                    .collect();
                 self.channels[ch].analysis.run(&input, slot);
             }
             let mut xr = [0.0f32; 576];
@@ -582,7 +618,11 @@ impl Encoder {
             for (sb, c) in coeffs.iter_mut().enumerate() {
                 let mut x = [0.0f64; 36];
                 for i in 0..36 {
-                    let v = if i < 18 { prev[i][sb] } else { slots[i - 18][sb] };
+                    let v = if i < 18 {
+                        prev[i][sb]
+                    } else {
+                        slots[i - 18][sb]
+                    };
                     x[i] = if sb % 2 == 1 && i % 2 == 1 { -v } else { v };
                 }
                 mdct(&x, bt, c);
@@ -596,7 +636,11 @@ impl Encoder {
                     let hi = usize::from(self.short_edges[b + 1]);
                     for w in 0..3 {
                         for f in lo..hi {
-                            xr[i] = if f < self.cutoff_short { coeffs[f / 6][w * 6 + f % 6] } else { 0.0 };
+                            xr[i] = if f < self.cutoff_short {
+                                coeffs[f / 6][w * 6 + f % 6]
+                            } else {
+                                0.0
+                            };
                             i += 1;
                         }
                     }
@@ -609,7 +653,9 @@ impl Encoder {
                 }
                 // Forward antialias butterflies (the inverse of the
                 // decoder's).
-                const CI: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
+                const CI: [f64; 8] = [
+                    -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037,
+                ];
                 for sb in 1..32 {
                     for (i, &c) in CI.iter().enumerate() {
                         let cs = 1.0 / (1.0 + c * c).sqrt();
@@ -631,7 +677,11 @@ impl Encoder {
             }
             xr_all.push(xr);
         }
-        self.frame_granules.push(Granule { block_type: bt, xr: xr_all, mask: masks });
+        self.frame_granules.push(Granule {
+            block_type: bt,
+            xr: xr_all,
+            mask: masks,
+        });
     }
 
     fn header(&self, bitrate_index: u8, padding: bool, ms: bool) -> FrameHeader {
@@ -657,7 +707,11 @@ impl Encoder {
     }
 
     fn bitrate_table(&self) -> &'static [u32; 15] {
-        if self.lsf { &BITRATES_LSF[2] } else { &BITRATES_MPEG1[2] }
+        if self.lsf {
+            &BITRATES_LSF[2]
+        } else {
+            &BITRATES_MPEG1[2]
+        }
     }
 
     /// Main-data bytes of a frame at `index` with `padding`.
@@ -720,34 +774,53 @@ impl Encoder {
             BitrateMode::Vbr(_) => self.vbr_offset_db,
         };
         let first = quantise_serial(&work, offset);
-        Prepared { grs, ms, work, first }
+        Prepared {
+            grs,
+            ms,
+            work,
+            first,
+        }
     }
 
     /// Quantise every granule and channel of a frame with every band's
     /// allowed noise raised by `offset_db`: on the quantiser threads too
     /// when there are any, the result the same either way.
     fn quantise_frame(&self, work: &Arc<FrameWork>, offset_db: f64) -> FrameQuant {
-        let Some(pool) = &self.pool else { return quantise_serial(work, offset_db) };
+        let Some(pool) = &self.pool else {
+            return quantise_serial(work, offset_db);
+        };
         let scale = 10f64.powf(offset_db / 10.0);
         let n = work.items.len();
         // Items 1.. go to the threads; this thread takes item 0.
         for i in 1..n {
-            pool.jobs.send((Arc::clone(work), i, scale)).expect("quantiser threads run while the encoder lives");
+            pool.jobs
+                .send((Arc::clone(work), i, scale))
+                .expect("quantiser threads run while the encoder lives");
         }
         let mut out: Vec<Option<Quantised>> = vec![None; n];
         out[0] = Some(work.quantise(0, scale));
         let done = pool.done.lock().expect("one reader");
         for _ in 1..n {
-            let (i, q) = done.recv().expect("quantiser threads run while the encoder lives");
+            let (i, q) = done
+                .recv()
+                .expect("quantiser threads run while the encoder lives");
             out[i] = Some(q);
         }
         let mut items = out.into_iter().map(|q| q.expect("every item quantised"));
-        (0..n / work.nch).map(|_| items.by_ref().take(work.nch).collect()).collect()
+        (0..n / work.nch)
+            .map(|_| items.by_ref().take(work.nch).collect())
+            .collect()
     }
 
     fn encode_frame(&mut self, p: Prepared, out: &mut Vec<Vec<u8>>) {
-        let Prepared { grs, ms, work, first } = p;
-        let quantise_all = |enc: &Encoder, offset_db: f64| -> FrameQuant { enc.quantise_frame(&work, offset_db) };
+        let Prepared {
+            grs,
+            ms,
+            work,
+            first,
+        } = p;
+        let quantise_all =
+            |enc: &Encoder, offset_db: f64| -> FrameQuant { enc.quantise_frame(&work, offset_db) };
         let total = |q: &Vec<Vec<Quantised>>| -> (u32, bool) {
             let mut sum = 0;
             let mut ok = true;
@@ -763,7 +836,11 @@ impl Encoder {
         // Choose the bit rate (VBR) and the budget.
         let (index, padding) = match self.cfg.bitrate {
             BitrateMode::Cbr(b) => {
-                let index = self.bitrate_table().iter().position(|&r| r == b / 1000).unwrap_or(1) as u8;
+                let index = self
+                    .bitrate_table()
+                    .iter()
+                    .position(|&r| r == b / 1000)
+                    .unwrap_or(1) as u8;
                 // Padding keeps the average frame length exact.
                 let num = (self.spf as u64 / 8) * u64::from(b);
                 let fs = u64::from(self.cfg.sample_rate);
@@ -813,7 +890,11 @@ impl Encoder {
                 }
                 let slot = self.slot_bytes(pick, false);
                 let avail = 8 * (self.free_tail + slot) as u32;
-                let q = if need <= avail && total(&q0).1 { q0 } else { self.fit(&quantise_all, &total, q0, avail) };
+                let q = if need <= avail && total(&q0).1 {
+                    q0
+                } else {
+                    self.fit(&quantise_all, &total, q0, avail)
+                };
                 (q, pick)
             }
         };
@@ -878,12 +959,17 @@ impl Encoder {
         let mut ms = 0.0;
         let s2 = std::f32::consts::FRAC_1_SQRT_2;
         for g in grs {
-            lr += g.mask[0].pe(&self.long_edges, &self.short_edges) + g.mask[1].pe(&self.long_edges, &self.short_edges);
+            lr += g.mask[0].pe(&self.long_edges, &self.short_edges)
+                + g.mask[1].pe(&self.long_edges, &self.short_edges);
             let mask = g.mask[0].min(&g.mask[1]);
             let m: [f32; 576] = std::array::from_fn(|i| (g.xr[0][i] + g.xr[1][i]) * s2);
             let s: [f32; 576] = std::array::from_fn(|i| (g.xr[0][i] - g.xr[1][i]) * s2);
-            ms += mask.with_energy_of(&m, &self.long_edges, &self.short_edges).pe(&self.long_edges, &self.short_edges)
-                + mask.with_energy_of(&s, &self.long_edges, &self.short_edges).pe(&self.long_edges, &self.short_edges);
+            ms += mask
+                .with_energy_of(&m, &self.long_edges, &self.short_edges)
+                .pe(&self.long_edges, &self.short_edges)
+                + mask
+                    .with_energy_of(&s, &self.long_edges, &self.short_edges)
+                    .pe(&self.long_edges, &self.short_edges);
         }
         ms < lr
     }
@@ -905,7 +991,10 @@ impl Encoder {
         let region1_long = usize::from(SFB_LONG[rate][8]);
         // Main data.
         let mut main = BitWriter::new();
-        let mut si = SideInfo { main_data_begin: self.free_tail, ..Default::default() };
+        let mut si = SideInfo {
+            main_data_begin: self.free_tail,
+            ..Default::default()
+        };
         for (gr, gq) in q.iter().enumerate() {
             let bt = grs[gr].block_type;
             for (ch, qc) in gq.iter().enumerate() {
@@ -958,13 +1047,21 @@ impl Encoder {
         }
         let slot_start = bytes.len();
         bytes.resize(frame_len, 0);
-        self.pending.push_back(Pending { bytes, slot_start, filled: 0 });
+        self.pending.push_back(Pending {
+            bytes,
+            slot_start,
+            filled: 0,
+        });
         // Place the main data: first the free tails of earlier frames, then
         // this frame's slot.
         let mut data = &main[..];
         let skip_tail = {
             // Bytes of pending slots before the free region.
-            let total_slots: usize = self.pending.iter().map(|p| p.bytes.len() - p.slot_start).sum();
+            let total_slots: usize = self
+                .pending
+                .iter()
+                .map(|p| p.bytes.len() - p.slot_start)
+                .sum();
             let used: usize = self.pending.iter().map(|p| p.filled).sum();
             total_slots - used - (self.free_tail + slot)
         };
@@ -1070,7 +1167,8 @@ impl Encoder {
                 quality,
                 encoder: ENCODER_NAME,
                 vbr_method: if vbr { 4 } else { 1 },
-                lowpass_hz: (self.cutoff_long as f64 / 576.0 * f64::from(self.cfg.sample_rate) / 2.0) as u32,
+                lowpass_hz: (self.cutoff_long as f64 / 576.0 * f64::from(self.cfg.sample_rate)
+                    / 2.0) as u32,
                 bitrate_kbps,
                 delay: ENCODER_DELAY,
                 padding: self.padding,
@@ -1085,7 +1183,11 @@ impl Encoder {
 
 /// `f` over `items`, in order, on up to `threads` threads (the calling
 /// thread among them), each taking the next item as it finishes one.
-fn parallel_map<T: Send, R: Send>(items: Vec<T>, threads: usize, f: impl Fn(T) -> R + Sync) -> Vec<R> {
+fn parallel_map<T: Send, R: Send>(
+    items: Vec<T>,
+    threads: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
     let n = items.len();
     if threads <= 1 || n <= 1 {
         return items.into_iter().map(f).collect();
@@ -1115,5 +1217,7 @@ fn parallel_map<T: Send, R: Send>(items: Vec<T>, threads: usize, f: impl Fn(T) -
 fn quantise_serial(work: &FrameWork, offset_db: f64) -> FrameQuant {
     let scale = 10f64.powf(offset_db / 10.0);
     let mut items = (0..work.items.len()).map(|i| work.quantise(i, scale));
-    (0..work.items.len() / work.nch).map(|_| items.by_ref().take(work.nch).collect()).collect()
+    (0..work.items.len() / work.nch)
+        .map(|_| items.by_ref().take(work.nch).collect())
+        .collect()
 }

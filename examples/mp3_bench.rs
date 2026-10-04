@@ -29,18 +29,29 @@ fn decode(bytes: &[u8]) -> (Vec<f32>, u32, u8) {
     let frames = Decoder::decode_all(bytes).expect("decode");
     let rate = frames.first().map_or(44_100, |f| f.sample_rate);
     let ch = frames.first().map_or(2, |f| f.channels);
-    (frames.into_iter().flat_map(|f| f.samples).collect(), rate, ch)
+    (
+        frames.into_iter().flat_map(|f| f.samples).collect(),
+        rate,
+        ch,
+    )
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).expect("usage: bench <pcm.raw> [seconds] [runs] [file.mp3 ...]");
+    let path = args
+        .get(1)
+        .expect("usage: bench <pcm.raw> [seconds] [runs] [file.mp3 ...]");
     let seconds: f64 = args.get(2).map_or(60.0, |s| s.parse().expect("seconds"));
     let runs: usize = args.get(3).map_or(3, |s| s.parse().expect("runs"));
     let raw = std::fs::read(path).expect("read");
     let take = ((seconds * 44_100.0) as usize * 2).min(raw.len() / 2);
-    let pcm: Vec<f32> =
-        raw.as_chunks::<2>().0.iter().take(take).map(|b| f32::from(i16::from_le_bytes(*b)) / 32768.0).collect();
+    let pcm: Vec<f32> = raw
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .take(take)
+        .map(|b| f32::from(i16::from_le_bytes(*b)) / 32768.0)
+        .collect();
     let dur = pcm.len() as f64 / 2.0 / 44_100.0;
     println!("{dur:.1} s of stereo 44.1 kHz");
     for (name, bitrate) in [
@@ -49,7 +60,11 @@ fn main() {
         ("VBR q2", BitrateMode::Vbr(2)),
     ] {
         let encode = |threads: usize| {
-            let mut e = Encoder::new(EncoderConfig { bitrate, ..EncoderConfig::default() }).expect("encoder");
+            let mut e = Encoder::new(EncoderConfig {
+                bitrate,
+                ..EncoderConfig::default()
+            })
+            .expect("encoder");
             e.set_threads(threads);
             let mut out: Vec<u8> = e.encode(&pcm).into_iter().flatten().collect();
             out.extend(e.flush().into_iter().flatten());

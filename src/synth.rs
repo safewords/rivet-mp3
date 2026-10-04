@@ -42,10 +42,13 @@ fn tables() -> &'static Tables {
         let mut n = vec![0.0; 33 * 32];
         for i in 16..=48 {
             for k in 0..32 {
-                n[(i - 16) * 32 + k] = (((16 + i) * (2 * k + 1)) as f64 * std::f64::consts::PI / 64.0).cos();
+                n[(i - 16) * 32 + k] =
+                    (((16 + i) * (2 * k + 1)) as f64 * std::f64::consts::PI / 64.0).cos();
             }
         }
-        let n_t = std::array::from_fn(|k| std::array::from_fn(|r| if r < 33 { n[r * 32 + k] } else { 0.0 }));
+        let n_t = std::array::from_fn(|k| {
+            std::array::from_fn(|r| if r < 33 { n[r * 32 + k] } else { 0.0 })
+        });
         Tables {
             #[cfg(test)]
             n,
@@ -66,7 +69,10 @@ pub(crate) struct Synth {
 
 impl Default for Synth {
     fn default() -> Self {
-        Self { v: Box::new([0.0; 1024]), off: 0 }
+        Self {
+            v: Box::new([0.0; 1024]),
+            off: 0,
+        }
     }
 }
 
@@ -185,7 +191,10 @@ mod tests {
             }
             for i in 0..64 {
                 self.v[i] = (0..32)
-                    .map(|k| (((16 + i) * (2 * k + 1)) as f64 * std::f64::consts::PI / 64.0).cos() * f64::from(s[k]))
+                    .map(|k| {
+                        (((16 + i) * (2 * k + 1)) as f64 * std::f64::consts::PI / 64.0).cos()
+                            * f64::from(s[k])
+                    })
                     .sum();
             }
             let mut u = [0.0; 512];
@@ -212,7 +221,11 @@ mod tests {
         let mut mid = [0.0f64; 33];
         for (r, m) in mid.iter_mut().enumerate() {
             let row = &t.n[r * 32..r * 32 + 32];
-            *m = row.iter().zip(s.iter()).map(|(&a, &b)| a * f64::from(b)).sum();
+            *m = row
+                .iter()
+                .zip(s.iter())
+                .map(|(&a, &b)| a * f64::from(b))
+                .sum();
         }
         for i in 0..64 {
             syn.v[(syn.off + i) % 1024] = row_value(i, &mid);
@@ -283,7 +296,10 @@ mod tests {
             syn.run(&s, &mut last);
         }
         for &x in &last {
-            assert!((x - last[0]).abs() < 0.01 * last[0].abs().max(1e-3), "{last:?}");
+            assert!(
+                (x - last[0]).abs() < 0.01 * last[0].abs().max(1e-3),
+                "{last:?}"
+            );
         }
         assert!(last[0].abs() > 0.5, "{}", last[0]);
     }

@@ -33,7 +33,11 @@ fn read_wav(path: &Path) -> (Vec<f64>, usize, u32) {
             ch = usize::from(u16::from_le_bytes([body[2], body[3]]));
             rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
             bits = u16::from_le_bytes([body[14], body[15]]);
-            let tag = if tag == 0xFFFE { u16::from_le_bytes([body[24], body[25]]) } else { tag };
+            let tag = if tag == 0xFFFE {
+                u16::from_le_bytes([body[24], body[25]])
+            } else {
+                tag
+            };
             float = tag == 3;
         } else if id == b"data" {
             data = body;
@@ -68,7 +72,10 @@ struct Outcome {
 /// starts before the stream does produces no output in the reference
 /// decoder, where this decoder emits silence to keep the timeline.
 fn decode_segments(bytes: &[u8]) -> Result<Vec<Vec<mp3::Frame>>, mp3::Error> {
-    let mut d = Decoder::with_options(DecoderOptions { trim_gapless: false, ..Default::default() });
+    let mut d = Decoder::with_options(DecoderOptions {
+        trim_gapless: false,
+        ..Default::default()
+    });
     let mut frames = d.decode(bytes)?;
     frames.extend(d.flush()?);
     let mut segments: Vec<Vec<mp3::Frame>> = Vec::new();
@@ -87,7 +94,10 @@ fn judge(name: &str, frames: &[mp3::Frame], reference: &Path) -> Outcome {
     let first = &frames[0];
     let ch = usize::from(first.channels);
     let rate = first.sample_rate;
-    let got: Vec<f32> = frames.iter().flat_map(|f| f.samples.iter().copied()).collect();
+    let got: Vec<f32> = frames
+        .iter()
+        .flat_map(|f| f.samples.iter().copied())
+        .collect();
     let h = first.header;
     let mut detail = format!(
         "{:?} L{} {} Hz {:?} {} kb/s{}{}",
@@ -136,7 +146,13 @@ fn judge(name: &str, frames: &[mp3::Frame], reference: &Path) -> Outcome {
     } else {
         "FAIL"
     };
-    Outcome { name, detail, rms, max, verdict }
+    Outcome {
+        name,
+        detail,
+        rms,
+        max,
+        verdict,
+    }
 }
 
 /// The reference waveforms for a stream: `<name>.wav`, or for streams with
@@ -150,17 +166,23 @@ fn references(dir: &Path, name: &str) -> Vec<(usize, Vec<PathBuf>)> {
     for e in std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()) {
         let p = e.path();
         let file = p.file_name().unwrap().to_string_lossy().to_string();
-        let Some(rest) = file.strip_prefix(&format!("{name}_")).and_then(|r| r.strip_suffix(".wav")) else {
+        let Some(rest) = file
+            .strip_prefix(&format!("{name}_"))
+            .and_then(|r| r.strip_suffix(".wav"))
+        else {
             continue;
         };
         if let Some(seg) = rest.split('_').next().and_then(|s| s.parse::<usize>().ok()) {
             by_seg.entry(seg).or_default().push(p);
         }
     }
-    by_seg.into_iter().map(|(k, mut v)| {
-        v.sort();
-        (k, v)
-    }).collect()
+    by_seg
+        .into_iter()
+        .map(|(k, mut v)| {
+            v.sort();
+            (k, v)
+        })
+        .collect()
 }
 
 #[test]
@@ -177,7 +199,10 @@ fn iso_conformance_sequences() {
         .collect();
     streams.sort();
     let mut failures = Vec::new();
-    println!("{:<22} {:<56} {:>10} {:>10}  verdict", "reference", "stream", "RMS", "max |e|");
+    println!(
+        "{:<22} {:<56} {:>10} {:>10}  verdict",
+        "reference", "stream", "RMS", "max |e|"
+    );
     for s in &streams {
         let name = s.file_stem().unwrap().to_string_lossy().to_string();
         let refs = references(&dir, &name);
@@ -194,7 +219,10 @@ fn iso_conformance_sequences() {
         };
         for (seg, variants) in refs {
             let Some(frames) = segments.get(seg) else {
-                println!("{name:<22} segment {seg} missing ({} decoded)", segments.len());
+                println!(
+                    "{name:<22} segment {seg} missing ({} decoded)",
+                    segments.len()
+                );
                 failures.push(format!("{name}_{seg}"));
                 continue;
             };
@@ -204,7 +232,10 @@ fn iso_conformance_sequences() {
                 .map(|r| judge(&r.file_stem().unwrap().to_string_lossy(), frames, r))
                 .min_by(|a, b| a.rms.total_cmp(&b.rms))
                 .unwrap();
-            println!("{:<22} {:<56} {:>10.3e} {:>10.3e}  {}", best.name, best.detail, best.rms, best.max, best.verdict);
+            println!(
+                "{:<22} {:<56} {:>10.3e} {:>10.3e}  {}",
+                best.name, best.detail, best.rms, best.max, best.verdict
+            );
             if best.verdict == "FAIL" {
                 failures.push(best.name);
             }

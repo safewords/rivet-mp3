@@ -31,7 +31,8 @@ fn tables() -> &'static Tables {
         let mut m = vec![0.0; 32 * 64];
         for k in 0..32 {
             for i in 0..64 {
-                m[k * 64 + i] = ((2 * k + 1) as f64 * (i as f64 - 16.0) * std::f64::consts::PI / 64.0).cos();
+                m[k * 64 + i] =
+                    ((2 * k + 1) as f64 * (i as f64 - 16.0) * std::f64::consts::PI / 64.0).cos();
             }
         }
         Tables { c, m }
@@ -48,7 +49,10 @@ pub(crate) struct Analysis {
 
 impl Default for Analysis {
     fn default() -> Self {
-        Self { x: Box::new([0.0; 512]), head: 0 }
+        Self {
+            x: Box::new([0.0; 512]),
+            head: 0,
+        }
     }
 }
 

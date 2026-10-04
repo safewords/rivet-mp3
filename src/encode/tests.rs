@@ -13,7 +13,10 @@ struct Rng(u64);
 
 impl Rng {
     fn next(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
     }
 }
@@ -43,7 +46,10 @@ fn programme(seconds: f64, rate: u32, nch: usize) -> Vec<f32> {
             }
             note += (2.0 * PI * fh * tn).sin() * (-tn * (3.0 + h as f64)).exp() / h as f64;
         }
-        let pad = 0.06 * ((2.0 * PI * 130.81 * t).sin() + (2.0 * PI * 196.0 * t).sin() + (2.0 * PI * 311.13 * t).sin());
+        let pad = 0.06
+            * ((2.0 * PI * 130.81 * t).sin()
+                + (2.0 * PI * 196.0 * t).sin()
+                + (2.0 * PI * 311.13 * t).sin());
         let mut click = 0.0;
         for &c in &clicks {
             let d = t - c;
@@ -88,13 +94,23 @@ fn encode(cfg: EncoderConfig, pcm: &[f32]) -> (Vec<u8>, Encoder, Vec<Vec<u8>>) {
 
 /// Decode strictly, gapless-trimmed.
 fn decode_strict(stream: &[u8]) -> (Vec<f32>, Decoder) {
-    let mut d = Decoder::with_options(DecoderOptions { strict: true, check_crc: true, trim_gapless: true });
+    let mut d = Decoder::with_options(DecoderOptions {
+        strict: true,
+        check_crc: true,
+        trim_gapless: true,
+    });
     let mut out = Vec::new();
     for chunk in stream.chunks(777) {
-        out.extend(d.decode(chunk).unwrap_or_else(|e| panic!("strict decode: {e}")));
+        out.extend(
+            d.decode(chunk)
+                .unwrap_or_else(|e| panic!("strict decode: {e}")),
+        );
     }
     out.extend(d.flush().unwrap_or_else(|e| panic!("strict decode: {e}")));
-    (out.iter().flat_map(|f| f.samples.iter().copied()).collect(), d)
+    (
+        out.iter().flat_map(|f| f.samples.iter().copied()).collect(),
+        d,
+    )
 }
 
 /// Long-block spectra of a channel, granule by granule, as the encoder
@@ -112,7 +128,11 @@ fn spectra(x: &[f32]) -> Vec<[f32; 576]> {
         for sb in 0..32 {
             let mut v = [0.0f64; 36];
             for i in 0..36 {
-                let s = if i < 18 { prev[i][sb] } else { slots[i - 18][sb] };
+                let s = if i < 18 {
+                    prev[i][sb]
+                } else {
+                    slots[i - 18][sb]
+                };
                 v[i] = if sb % 2 == 1 && i % 2 == 1 { -s } else { s };
             }
             let mut c = [0.0f32; 18];
@@ -164,7 +184,9 @@ fn measure(orig: &[f32], dec: &[f32], nch: usize, rate: u32, cutoff_hz: f64) -> 
         let mut prev: Option<[f64; 22]> = None;
         for (g, (a, b)) in sx.iter().zip(&se).enumerate() {
             let mask = psy.long(a, prev.as_ref());
-            let Mask::Long { thr, .. } = mask else { unreachable!() };
+            let Mask::Long { thr, .. } = mask else {
+                unreachable!()
+            };
             prev = Some(thr);
             if g < 2 || g + 2 >= sx.len() {
                 continue;
@@ -192,7 +214,13 @@ fn measure(orig: &[f32], dec: &[f32], nch: usize, rate: u32, cutoff_hz: f64) -> 
         nmr_mean_db: mean,
         nmr_p95_db: p95,
         over_mask: over,
-        per_band: std::array::from_fn(|b| if band_n[b] > 0 { band_sum[b] / band_n[b] as f64 } else { f64::NAN }),
+        per_band: std::array::from_fn(|b| {
+            if band_n[b] > 0 {
+                band_sum[b] / band_n[b] as f64
+            } else {
+                f64::NAN
+            }
+        }),
     }
 }
 
@@ -202,7 +230,11 @@ fn headers(frames: &[Vec<u8>]) -> Vec<FrameHeader> {
         .iter()
         .map(|f| {
             let h = FrameHeader::parse(f).unwrap();
-            assert_eq!(h.frame_len(), Some(f.len()), "frame length matches its header");
+            assert_eq!(
+                h.frame_len(),
+                Some(f.len()),
+                "frame length matches its header"
+            );
             h
         })
         .collect()
@@ -217,7 +249,13 @@ struct Case {
 }
 
 fn case(rate: u32, nch: u8, mode: BitrateMode) -> Case {
-    Case { rate, nch, mode, joint: true, crc: false }
+    Case {
+        rate,
+        nch,
+        mode,
+        joint: true,
+        crc: false,
+    }
 }
 
 /// Run one configuration: strict decode, exact length, tag fields, and the
@@ -235,9 +273,15 @@ fn run_case(c: &Case, seconds: f64) -> (Measure, f64, usize, usize) {
     let (stream, enc, frames) = encode(cfg, &pcm);
     let hs = headers(&frames);
     let (dec, d) = decode_strict(&stream);
-    assert_eq!(dec.len(), pcm.len(), "gapless: decoded length equals the input");
+    assert_eq!(
+        dec.len(),
+        pcm.len(),
+        "gapless: decoded length equals the input"
+    );
     // The tag.
-    let Some(InfoHeader::Xing(x)) = d.info() else { panic!("no Xing/Info tag") };
+    let Some(InfoHeader::Xing(x)) = d.info() else {
+        panic!("no Xing/Info tag")
+    };
     assert_eq!(x.is_info, matches!(c.mode, BitrateMode::Cbr(_)));
     assert_eq!(x.frames, Some(frames.len() as u32));
     assert_eq!(x.bytes, Some(stream.len() as u32));
@@ -251,7 +295,10 @@ fn run_case(c: &Case, seconds: f64) -> (Measure, f64, usize, usize) {
     let g = d.gapless().unwrap();
     assert_eq!(g.length, Some(pcm.len() as u64 / u64::from(c.nch)));
     if let BitrateMode::Cbr(b) = c.mode {
-        assert!(hs.iter().all(|h| h.bitrate() == b), "CBR: every frame at {b}");
+        assert!(
+            hs.iter().all(|h| h.bitrate() == b),
+            "CBR: every frame at {b}"
+        );
     }
     assert!(hs.iter().all(|h| h.crc == c.crc));
     let ms_frames = hs.iter().filter(|h| h.mode_extension & 2 != 0).count();
@@ -288,7 +335,13 @@ fn label(c: &Case) -> String {
     format!(
         "{:>5} Hz {} {} {}{}",
         c.rate,
-        if c.nch == 1 { "mono  " } else if c.joint { "joint " } else { "stereo" },
+        if c.nch == 1 {
+            "mono  "
+        } else if c.joint {
+            "joint "
+        } else {
+            "stereo"
+        },
         mode,
         if c.crc { "CRC" } else { "   " },
         ""
@@ -301,6 +354,7 @@ fn label(c: &Case) -> String {
 #[test]
 fn round_trips() {
     use BitrateMode::{Cbr, Vbr};
+    #[rustfmt::skip]
     let mut cases = vec![
         case(44_100, 2, Cbr(32_000)),
         case(44_100, 2, Cbr(64_000)),
@@ -340,7 +394,12 @@ fn round_trips() {
     if cfg!(debug_assertions) && std::env::var_os("MP3_ENCODER_REPORT").is_none() {
         // Unoptimised builds: a representative subset.
         let keep = [3, 7, 9, 10, 18, 25, 27, 31];
-        cases = cases.into_iter().enumerate().filter(|(i, _)| keep.contains(i)).map(|(_, c)| c).collect();
+        cases = cases
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| keep.contains(i))
+            .map(|(_, c)| c)
+            .collect();
     }
     let report = std::env::var_os("MP3_ENCODER_REPORT").is_some();
     if report {
@@ -372,7 +431,12 @@ fn round_trips() {
             BitrateMode::Vbr(q) => q <= 4 && c.rate >= 32_000,
         };
         if rich {
-            assert!(m.nmr_mean_db < 0.0, "{}: mean NMR {:.1} dB", label(c), m.nmr_mean_db);
+            assert!(
+                m.nmr_mean_db < 0.0,
+                "{}: mean NMR {:.1} dB",
+                label(c),
+                m.nmr_mean_db
+            );
         }
         if report && std::env::var_os("MP3_ENCODER_BANDS").is_some() {
             let v: Vec<String> = m.per_band.iter().map(|x| format!("{x:.0}")).collect();
@@ -389,14 +453,26 @@ fn delay_matches_the_tag() {
     let mut pcm = vec![0.0f32; rate as usize / 2];
     pcm[5000] = 0.9;
     let (stream, _, _) = encode(
-        EncoderConfig { channels: 1, bitrate: BitrateMode::Cbr(320_000), ..Default::default() },
+        EncoderConfig {
+            channels: 1,
+            bitrate: BitrateMode::Cbr(320_000),
+            ..Default::default()
+        },
         &pcm,
     );
-    let mut d = Decoder::with_options(DecoderOptions { trim_gapless: false, ..Default::default() });
+    let mut d = Decoder::with_options(DecoderOptions {
+        trim_gapless: false,
+        ..Default::default()
+    });
     let mut out = d.decode(&stream).unwrap();
     out.extend(d.flush().unwrap());
     let dec: Vec<f32> = out.iter().flat_map(|f| f.samples.iter().copied()).collect();
-    let peak = dec.iter().enumerate().max_by(|a, b| a.1.abs().total_cmp(&b.1.abs())).unwrap().0;
+    let peak = dec
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+        .unwrap()
+        .0;
     assert_eq!(peak, 5000 + (ENCODER_DELAY + DECODER_DELAY) as usize);
 }
 
@@ -412,14 +488,33 @@ fn attacks_use_short_blocks() {
     let at = 20_000;
     for (i, v) in pcm.iter_mut().enumerate() {
         let quiet = 0.001 * (i as f32 * 0.03).sin();
-        *v = if i >= at { quiet + 0.7 * rng.next() as f32 * (-((i - at) as f32) / 3000.0).exp() } else { quiet };
+        *v = if i >= at {
+            quiet + 0.7 * rng.next() as f32 * (-((i - at) as f32) / 3000.0).exp()
+        } else {
+            quiet
+        };
     }
-    let (stream, _, frames) =
-        encode(EncoderConfig { channels: 1, bitrate: BitrateMode::Cbr(128_000), ..Default::default() }, &pcm);
-    assert!(count_short_granules(&frames) >= 1, "no short blocks for an attack");
+    let (stream, _, frames) = encode(
+        EncoderConfig {
+            channels: 1,
+            bitrate: BitrateMode::Cbr(128_000),
+            ..Default::default()
+        },
+        &pcm,
+    );
+    assert!(
+        count_short_granules(&frames) >= 1,
+        "no short blocks for an attack"
+    );
     let (dec, _) = decode_strict(&stream);
-    let pre: f64 = (at - 576..at - 64).map(|i| f64::from(dec[i] - pcm[i]).powi(2)).sum::<f64>() / 512.0;
-    let post: f64 = (at..at + 512).map(|i| f64::from(pcm[i]).powi(2)).sum::<f64>() / 512.0;
+    let pre: f64 = (at - 576..at - 64)
+        .map(|i| f64::from(dec[i] - pcm[i]).powi(2))
+        .sum::<f64>()
+        / 512.0;
+    let post: f64 = (at..at + 512)
+        .map(|i| f64::from(pcm[i]).powi(2))
+        .sum::<f64>()
+        / 512.0;
     let ratio = 10.0 * (post / pre.max(1e-30)).log10();
     assert!(ratio > 30.0, "pre-echo only {ratio:.1} dB below the attack");
 }
@@ -442,7 +537,13 @@ fn mid_side_follows_correlation() {
     let cfg = EncoderConfig::default();
     let (_, _, f1) = encode(cfg, &same);
     let (_, _, f2) = encode(cfg, &apart);
-    let ms = |f: &[Vec<u8>]| headers(f).iter().filter(|h| h.mode_extension & 2 != 0).count() as f64 / f.len() as f64;
+    let ms = |f: &[Vec<u8>]| {
+        headers(f)
+            .iter()
+            .filter(|h| h.mode_extension & 2 != 0)
+            .count() as f64
+            / f.len() as f64
+    };
     assert!(ms(&f1) > 0.9, "correlated: {}", ms(&f1));
     assert!(ms(&f2) < 0.5, "independent: {}", ms(&f2));
 }
@@ -452,18 +553,37 @@ fn mid_side_follows_correlation() {
 /// left unused, nor the field's range.
 #[test]
 fn reservoir_accounting() {
-    for mode in [BitrateMode::Cbr(64_000), BitrateMode::Cbr(256_000), BitrateMode::Vbr(3)] {
+    for mode in [
+        BitrateMode::Cbr(64_000),
+        BitrateMode::Cbr(256_000),
+        BitrateMode::Vbr(3),
+    ] {
         let pcm = programme(2.0, 44_100, 2);
-        let (_, _, frames) = encode(EncoderConfig { bitrate: mode, ..Default::default() }, &pcm);
+        let (_, _, frames) = encode(
+            EncoderConfig {
+                bitrate: mode,
+                ..Default::default()
+            },
+            &pcm,
+        );
         let mut unused = 0usize;
         let mut used_reservoir = false;
         for f in &frames {
             let h = FrameHeader::parse(f).unwrap();
             let si = SideInfo::parse(&f[h.header_len()..], &h).unwrap();
-            assert!(si.main_data_begin <= unused, "main_data_begin {} > {unused} unused", si.main_data_begin);
+            assert!(
+                si.main_data_begin <= unused,
+                "main_data_begin {} > {unused} unused",
+                si.main_data_begin
+            );
             assert!(si.main_data_begin <= 511);
             used_reservoir |= si.main_data_begin > 0;
-            let bits: usize = si.gr.iter().flatten().map(|g| usize::from(g.part2_3_length)).sum();
+            let bits: usize = si
+                .gr
+                .iter()
+                .flatten()
+                .map(|g| usize::from(g.part2_3_length))
+                .sum();
             let have = (si.main_data_begin + f.len() - h.header_len() - h.side_info_len()) * 8;
             assert!(bits <= have);
             unused = (have - bits) / 8;
@@ -475,14 +595,42 @@ fn reservoir_accounting() {
 #[test]
 fn configuration_errors() {
     let bad = |c: EncoderConfig| Encoder::new(c).err().unwrap().to_string();
-    assert!(bad(EncoderConfig { sample_rate: 44_000, ..Default::default() }).contains("sampling frequency"));
-    assert!(bad(EncoderConfig { channels: 3, ..Default::default() }).contains("one or two"));
-    assert!(bad(EncoderConfig { bitrate: BitrateMode::Cbr(100_000), ..Default::default() }).contains("bit rate"));
     assert!(
-        bad(EncoderConfig { sample_rate: 22_050, bitrate: BitrateMode::Cbr(192_000), ..Default::default() })
-            .contains("bit rate")
+        bad(EncoderConfig {
+            sample_rate: 44_000,
+            ..Default::default()
+        })
+        .contains("sampling frequency")
     );
-    assert!(bad(EncoderConfig { bitrate: BitrateMode::Vbr(10), ..Default::default() }).contains("quality"));
+    assert!(
+        bad(EncoderConfig {
+            channels: 3,
+            ..Default::default()
+        })
+        .contains("one or two")
+    );
+    assert!(
+        bad(EncoderConfig {
+            bitrate: BitrateMode::Cbr(100_000),
+            ..Default::default()
+        })
+        .contains("bit rate")
+    );
+    assert!(
+        bad(EncoderConfig {
+            sample_rate: 22_050,
+            bitrate: BitrateMode::Cbr(192_000),
+            ..Default::default()
+        })
+        .contains("bit rate")
+    );
+    assert!(
+        bad(EncoderConfig {
+            bitrate: BitrateMode::Vbr(10),
+            ..Default::default()
+        })
+        .contains("quality")
+    );
     assert_eq!(coding_rate(96_000), 48_000);
     assert_eq!(coding_rate(22_050), 22_050);
     assert_eq!(coding_rate(44_000), 44_100);
@@ -496,7 +644,11 @@ fn configuration_errors() {
 #[test]
 fn quantiser_meets_the_allowance() {
     let pcm = programme(1.0, 44_100, 1);
-    let mut enc = Encoder::new(EncoderConfig { channels: 1, ..Default::default() }).unwrap();
+    let mut enc = Encoder::new(EncoderConfig {
+        channels: 1,
+        ..Default::default()
+    })
+    .unwrap();
     enc.input[0].extend_from_slice(&pcm);
     enc.samples_in = pcm.len() as u64;
     for g in 0..40 {
@@ -516,10 +668,14 @@ fn quantiser_meets_the_allowance() {
         let mut q = quantize::quantise(&sp, 1.0);
         quantize::apply_signs(&mut q, &gr.xr[0]);
         let r = quantize::dequantise(&q, &sp);
-        let Mask::Long { thr, energy } = &gr.mask[0] else { unreachable!() };
+        let Mask::Long { thr, energy } = &gr.mask[0] else {
+            unreachable!()
+        };
         for b in 0..21 {
             let (lo, hi) = (usize::from(SFB_LONG[0][b]), usize::from(SFB_LONG[0][b + 1]));
-            let n: f64 = (lo..hi).map(|i| f64::from(r[i] - gr.xr[0][i]).powi(2)).sum();
+            let n: f64 = (lo..hi)
+                .map(|i| f64::from(r[i] - gr.xr[0][i]).powi(2))
+                .sum();
             if energy[b] > thr[b] {
                 total += 1;
                 over += usize::from(n > thr[b] * 1.26); // more than 1 dB above
@@ -527,5 +683,8 @@ fn quantiser_meets_the_allowance() {
         }
     }
     assert!(total > 100);
-    assert!(over * 20 < total, "{over} of {total} bands more than 1 dB above their allowance");
+    assert!(
+        over * 20 < total,
+        "{over} of {total} bands more than 1 dB above their allowance"
+    );
 }

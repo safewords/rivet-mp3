@@ -4,7 +4,9 @@
 //! 2.4.3.4.4, with the tables of Annex B, Table 3-B.7).
 
 use crate::bits::BitWriter;
-use crate::tables::huffman::{QUAD_A_CODES, QUAD_A_LENS, QUAD_B_CODES, QUAD_B_LENS, TABLE_INFO, pair_table};
+use crate::tables::huffman::{
+    QUAD_A_CODES, QUAD_A_LENS, QUAD_B_CODES, QUAD_B_LENS, TABLE_INFO, pair_table,
+};
 
 /// Largest magnitude a table can code: xlen - 1 without linbits, 15 +
 /// 2^linbits - 1 with.
@@ -21,7 +23,9 @@ fn capacity(table: usize) -> u32 {
 /// (the definition [`Costs`] is tested against).
 #[cfg(test)]
 fn pair_bits(table: usize, x: u32, y: u32) -> u32 {
-    let Some((base, lin)) = TABLE_INFO[table] else { return u32::MAX / 4 };
+    let Some((base, lin)) = TABLE_INFO[table] else {
+        return u32::MAX / 4;
+    };
     if base == 0 {
         return 0;
     }
@@ -41,8 +45,10 @@ fn pair_bits(table: usize, x: u32, y: u32) -> u32 {
 
 /// The tables worth considering: every code table except the unused 4
 /// and 14 (and 0, which only zeros use).
-const CANDIDATES: [usize; 29] =
-    [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
+const CANDIDATES: [usize; 29] = [
+    1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+    29, 30, 31,
+];
 
 /// How a granule's spectrum is to be Huffman coded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,7 +76,11 @@ fn candidate_info() -> &'static [(usize, u32, u32); 29] {
         std::array::from_fn(|i| {
             let t = CANDIDATES[i];
             let (base, lin) = TABLE_INFO[t].expect("a candidate is a code table");
-            (BASES.iter().position(|&b| b == base).expect("a base table"), lin, capacity(t))
+            (
+                BASES.iter().position(|&b| b == base).expect("a base table"),
+                lin,
+                capacity(t),
+            )
         })
     })
 }
@@ -145,7 +155,12 @@ impl Costs {
             max.push(next);
             span *= 2;
         }
-        Costs { words, escapes, signs, max }
+        Costs {
+            words,
+            escapes,
+            signs,
+            max,
+        }
     }
 
     /// The largest value in pairs `pa..pb` (non-empty).
@@ -191,7 +206,12 @@ impl Costs {
 /// Split a quantised granule (`ix`, signed) and choose regions and tables.
 /// `sfb_long` are the long band boundaries; `short` selects the window-
 /// switching region layout (region 1 from `short_region1`, no region 2).
-pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bool, region1_ws: usize) -> Coding {
+pub(crate) fn choose(
+    ix: &[i32; 576],
+    sfb_long: &[u16; 23],
+    window_switching: bool,
+    region1_ws: usize,
+) -> Coding {
     let mut abs = [0u32; 576];
     for (a, &v) in abs.iter_mut().zip(ix.iter()) {
         *a = v.unsigned_abs();
@@ -217,8 +237,12 @@ pub(crate) fn choose(ix: &[i32; 576], sfb_long: &[u16; 23], window_switching: bo
     let count1_bits = bits_a.min(bits_b);
     let pairs = c1 / 2;
     let costs = Costs::new(&abs, pairs);
-    let mut coding =
-        Coding { big_values: pairs as u16, count1_table_b, count1_lines: (end - c1) as u16, ..Default::default() };
+    let mut coding = Coding {
+        big_values: pairs as u16,
+        count1_table_b,
+        count1_lines: (end - c1) as u16,
+        ..Default::default()
+    };
     if window_switching {
         let r1 = region1_ws.min(c1);
         let (t0, b0) = costs.best(0, r1);
@@ -269,14 +293,24 @@ pub(crate) fn write(
     } else {
         (
             usize::from(sfb_long[usize::from(coding.region0_count) + 1]).min(big),
-            usize::from(sfb_long[(usize::from(coding.region0_count) + usize::from(coding.region1_count) + 2).min(22)])
-                .min(big),
+            usize::from(
+                sfb_long[(usize::from(coding.region0_count)
+                    + usize::from(coding.region1_count)
+                    + 2)
+                .min(22)],
+            )
+            .min(big),
         )
     };
-    let regions =
-        [(0, r1, coding.table_select[0]), (r1, r2, coding.table_select[1]), (r2, big, coding.table_select[2])];
+    let regions = [
+        (0, r1, coding.table_select[0]),
+        (r1, r2, coding.table_select[1]),
+        (r2, big, coding.table_select[2]),
+    ];
     for (a, b, table) in regions {
-        let Some((base, lin)) = TABLE_INFO[usize::from(table)] else { continue };
+        let Some((base, lin)) = TABLE_INFO[usize::from(table)] else {
+            continue;
+        };
         if base == 0 || a >= b {
             continue;
         }
@@ -301,11 +335,19 @@ pub(crate) fn write(
             }
         }
     }
-    let (codes, lens) =
-        if coding.count1_table_b { (&QUAD_B_CODES, &QUAD_B_LENS) } else { (&QUAD_A_CODES, &QUAD_A_LENS) };
-    for q in ix[big..big + usize::from(coding.count1_lines)].as_chunks::<4>().0 {
-        let idx = (q[0].unsigned_abs() << 3 | q[1].unsigned_abs() << 2 | q[2].unsigned_abs() << 1 | q[3].unsigned_abs())
-            as usize;
+    let (codes, lens) = if coding.count1_table_b {
+        (&QUAD_B_CODES, &QUAD_B_LENS)
+    } else {
+        (&QUAD_A_CODES, &QUAD_A_LENS)
+    };
+    for q in ix[big..big + usize::from(coding.count1_lines)]
+        .as_chunks::<4>()
+        .0
+    {
+        let idx = (q[0].unsigned_abs() << 3
+            | q[1].unsigned_abs() << 2
+            | q[2].unsigned_abs() << 1
+            | q[3].unsigned_abs()) as usize;
         w.put(u32::from(codes[idx]), u32::from(lens[idx]));
         for &v in q {
             if v != 0 {
@@ -335,7 +377,11 @@ mod tests {
             let bits: u64 = (pa..pb)
                 .map(|p| {
                     let (x, y) = (abs[2 * p], abs[2 * p + 1]);
-                    if x.max(y) > cap { 1 << 32 } else { u64::from(pair_bits(t, x, y)) }
+                    if x.max(y) > cap {
+                        1 << 32
+                    } else {
+                        u64::from(pair_bits(t, x, y))
+                    }
                 })
                 .sum();
             if bits < best.1 {
@@ -371,7 +417,11 @@ mod tests {
                 let x = next() as usize % (2 * pairs + 1);
                 let y = next() as usize % (2 * pairs + 1);
                 let (a, b) = (x.min(y), x.max(y));
-                assert_eq!(costs.best(a, b), best_by_pairs(&abs, a, b), "case {case} lines {a}..{b}");
+                assert_eq!(
+                    costs.best(a, b),
+                    best_by_pairs(&abs, a, b),
+                    "case {case} lines {a}..{b}"
+                );
             }
         }
     }

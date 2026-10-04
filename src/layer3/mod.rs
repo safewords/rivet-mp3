@@ -21,7 +21,9 @@ use sideinfo::{GranuleInfo, SideInfo};
 const RESERVOIR_MAX: usize = 511;
 
 /// Antialias butterfly coefficients c_i (Table 3-B.9).
-const CI: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
+const CI: [f64; 8] = [
+    -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037,
+];
 
 /// Per-channel scalefactors of one granule.
 #[derive(Clone, Copy, Debug, Default)]
@@ -64,7 +66,11 @@ pub(crate) struct Layer3 {
 
 impl Default for Layer3 {
     fn default() -> Self {
-        Self { reservoir: Vec::new(), overlap: Box::new([[[0.0; 18]; 32]; 2]), prev_sf: Default::default() }
+        Self {
+            reservoir: Vec::new(),
+            overlap: Box::new([[[0.0; 18]; 32]; 2]),
+            prev_sf: Default::default(),
+        }
     }
 }
 
@@ -116,7 +122,9 @@ impl Layer3 {
             let crc = frame_crc_bits(crc, frame, si_start * 8, si_len * 8);
             let stored = u16::from_be_bytes([frame[4], frame[5]]);
             if crc != stored {
-                return Err(invalid(format!("CRC mismatch: frame says {stored:04x}, data gives {crc:04x}")));
+                return Err(invalid(format!(
+                    "CRC mismatch: frame says {stored:04x}, data gives {crc:04x}"
+                )));
             }
         }
         let si = SideInfo::parse(&frame[si_start..si_start + si_len], h)?;
@@ -162,7 +170,11 @@ impl Layer3 {
         let rate = rate_index(h.version_index(), usize::from(h.sample_rate_index));
         let mut pos = 0usize;
         for gr in 0..ngr {
-            let mut g = GranuleData { xr: [[0.0; 576]; 2], nonzero: [0; 2], sf: Default::default() };
+            let mut g = GranuleData {
+                xr: [[0.0; 576]; 2],
+                nonzero: [0; 2],
+                sf: Default::default(),
+            };
             for ch in 0..nch {
                 let gi = &si.gr[gr][ch];
                 let end = pos + gi.part2_3_length as usize;
@@ -172,7 +184,8 @@ impl Layer3 {
                 }
                 let mut r = BitReader::at(&data, pos);
                 r.set_end(end);
-                let intensity_right = ch == 1 && h.mode == Mode::JointStereo && h.mode_extension & 1 == 1;
+                let intensity_right =
+                    ch == 1 && h.mode == Mode::JointStereo && h.mode_extension & 1 == 1;
                 let sf = if lsf {
                     read_scalefactors_lsf(&mut r, gi, intensity_right)?
                 } else {
@@ -205,7 +218,14 @@ impl Layer3 {
 
     /// Reorder, antialias, IMDCT with overlap-add and frequency inversion:
     /// one granule of one channel to 18 slots of 32 subband samples.
-    fn hybrid(&mut self, xr: &[f32; 576], gi: &GranuleInfo, ch: usize, h: &FrameHeader, out: &mut [[f32; 32]; 18]) {
+    fn hybrid(
+        &mut self,
+        xr: &[f32; 576],
+        gi: &GranuleInfo,
+        ch: usize,
+        h: &FrameHeader,
+        out: &mut [[f32; 32]; 18],
+    ) {
         let rate = rate_index(h.version_index(), usize::from(h.sample_rate_index));
         let mut x = *xr;
         let short = gi.block_type == 2;
@@ -235,7 +255,11 @@ impl Layer3 {
             // use the normal window, whatever the block type (the flag can
             // accompany start and stop blocks too, and the reference
             // decoder's output for l3_10203 has it so).
-            let bt = if gi.mixed_block && sb < 2 { 0 } else { gi.block_type };
+            let bt = if gi.mixed_block && sb < 2 {
+                0
+            } else {
+                gi.block_type
+            };
             let mut y = [0.0f64; 36];
             let xs = &x[sb * 18..sb * 18 + 18];
             if xs.iter().all(|&v| v.to_bits() == 0) {
@@ -309,7 +333,11 @@ fn read_scalefactors_mpeg1(
         for (g, &(a, b)) in GROUPS.iter().enumerate() {
             let len = if g < 2 { slen1 } else { slen2 };
             for band in a..b {
-                sf.l[band] = if gr == 1 && scfsi[g] { prev.l[band] } else { r.read(len)? as u8 };
+                sf.l[band] = if gr == 1 && scfsi[g] {
+                    prev.l[band]
+                } else {
+                    r.read(len)? as u8
+                };
             }
         }
     }
@@ -319,11 +347,18 @@ fn read_scalefactors_mpeg1(
 /// LSF scalefactors (13818-3 2.4.3.2): scalefac_compress (9 bits) gives
 /// four lengths and a row of [`NR_OF_SFB`]; for the right channel of an
 /// intensity-stereo frame the derivation differs.
-fn read_scalefactors_lsf(r: &mut BitReader, gi: &GranuleInfo, intensity_right: bool) -> Result<Scalefactors> {
+fn read_scalefactors_lsf(
+    r: &mut BitReader,
+    gi: &GranuleInfo,
+    intensity_right: bool,
+) -> Result<Scalefactors> {
     let sfc = u32::from(gi.scalefac_compress);
     let (slen, row) = if !intensity_right {
         if sfc < 400 {
-            ([(sfc >> 4) / 5, (sfc >> 4) % 5, (sfc % 16) >> 2, sfc % 4], 0)
+            (
+                [(sfc >> 4) / 5, (sfc >> 4) % 5, (sfc % 16) >> 2, sfc % 4],
+                0,
+            )
         } else if sfc < 500 {
             let s = sfc - 400;
             ([(s >> 2) / 5, (s >> 2) % 5, s % 4, 0], 1)
@@ -354,7 +389,11 @@ fn read_scalefactors_lsf(r: &mut BitReader, gi: &GranuleInfo, intensity_right: b
     let mut vals: Vec<(u8, u8)> = Vec::with_capacity(39);
     for (g, &n) in counts.iter().enumerate() {
         let len = slen[g];
-        let max = if len == 0 { 0 } else { ((1u32 << len) - 1) as u8 };
+        let max = if len == 0 {
+            0
+        } else {
+            ((1u32 << len) - 1) as u8
+        };
         for _ in 0..n {
             vals.push((r.read(len)? as u8, max));
         }
@@ -400,7 +439,12 @@ fn read_scalefactors_lsf(r: &mut BitReader, gi: &GranuleInfo, intensity_right: b
 /// Decode the big_values and count1 regions into `is`. Returns the index
 /// after the last decoded (possibly nonzero) value and whether the data
 /// ended exactly at part2_3_length.
-fn read_huffman(r: &mut BitReader, gi: &GranuleInfo, rate: usize, is: &mut [i32; 576]) -> Result<(usize, bool)> {
+fn read_huffman(
+    r: &mut BitReader,
+    gi: &GranuleInfo,
+    rate: usize,
+    is: &mut [i32; 576],
+) -> Result<(usize, bool)> {
     let big = (gi.big_values as usize * 2).min(576);
     let (r1, r2) = region_bounds(gi, rate);
     let r1 = r1.min(big);
@@ -451,7 +495,10 @@ pub(crate) fn region_bounds(gi: &GranuleInfo, rate: usize) -> (usize, usize) {
     } else {
         let a = (usize::from(gi.region0_count) + 1).min(22);
         let b = (usize::from(gi.region0_count) + usize::from(gi.region1_count) + 2).min(22);
-        (usize::from(SFB_LONG[rate][a]), usize::from(SFB_LONG[rate][b]))
+        (
+            usize::from(SFB_LONG[rate][a]),
+            usize::from(SFB_LONG[rate][b]),
+        )
     }
 }
 
@@ -462,7 +509,9 @@ pub(crate) fn mixed_long_bands(rate: usize) -> usize {
 
 /// The first short band of a mixed block.
 pub(crate) fn mixed_first_short(rate: usize) -> usize {
-    (0..13).find(|&b| 3 * usize::from(SFB_SHORT[rate][b]) >= 36).unwrap_or(3)
+    (0..13)
+        .find(|&b| 3 * usize::from(SFB_SHORT[rate][b]) >= 36)
+        .unwrap_or(3)
 }
 
 /// 2^(x/4) for the integer quarter-steps of the requantiser.
@@ -475,7 +524,11 @@ fn pow2_quarter(q: i32) -> f64 {
 /// `powf` values.
 pub(crate) fn pow43(v: i32) -> f64 {
     static T: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
-    let t = T.get_or_init(|| (0..=8206u32).map(|i| f64::from(i).powf(4.0 / 3.0)).collect());
+    let t = T.get_or_init(|| {
+        (0..=8206u32)
+            .map(|i| f64::from(i).powf(4.0 / 3.0))
+            .collect()
+    });
     let m = v.unsigned_abs();
     let a = match t.get(m as usize) {
         Some(&a) => a,
@@ -488,11 +541,26 @@ pub(crate) fn pow43(v: i32) -> f64 {
 /// xr = sign(is)|is|^(4/3) 2^((global_gain - 210)/4) 2^-(sfm (sf + preflag pretab)),
 /// short bands 2^((global_gain - 210 - 8 subblock_gain[w])/4) 2^-(sfm sf[w]),
 /// sfm = 0.5 (1 + scalefac_scale).
-fn requantise(is: &[i32; 576], gi: &GranuleInfo, sf: &Scalefactors, rate: usize, n: usize, xr: &mut [f32; 576]) {
+fn requantise(
+    is: &[i32; 576],
+    gi: &GranuleInfo,
+    sf: &Scalefactors,
+    rate: usize,
+    n: usize,
+    xr: &mut [f32; 576],
+) {
     xr.fill(0.0);
     let shift = if gi.scalefac_scale { 2 } else { 1 }; // sfm in quarter-steps / 2
     let gg = i32::from(gi.global_gain) - 210;
-    let long_end = if gi.block_type == 2 { if gi.mixed_block { mixed_long_bands(rate) } else { 0 } } else { 22 };
+    let long_end = if gi.block_type == 2 {
+        if gi.mixed_block {
+            mixed_long_bands(rate)
+        } else {
+            0
+        }
+    } else {
+        22
+    };
     // Long part.
     for b in 0..long_end {
         let lo = usize::from(SFB_LONG[rate][b]);
@@ -511,8 +579,16 @@ fn requantise(is: &[i32; 576], gi: &GranuleInfo, sf: &Scalefactors, rate: usize,
         return;
     }
     // Short part, in bitstream order: band, window, line.
-    let first = if gi.mixed_block { mixed_first_short(rate) } else { 0 };
-    let mut i = if gi.mixed_block { usize::from(SFB_LONG[rate][long_end]) } else { 0 };
+    let first = if gi.mixed_block {
+        mixed_first_short(rate)
+    } else {
+        0
+    };
+    let mut i = if gi.mixed_block {
+        usize::from(SFB_LONG[rate][long_end])
+    } else {
+        0
+    };
     for b in first..13 {
         let width = usize::from(SFB_SHORT[rate][b + 1] - SFB_SHORT[rate][b]);
         for w in 0..3 {
@@ -533,7 +609,11 @@ fn requantise(is: &[i32; 576], gi: &GranuleInfo, sf: &Scalefactors, rate: usize,
 fn reorder(x: &mut [f32; 576], mixed: bool, rate: usize) {
     let src = *x;
     let first = if mixed { mixed_first_short(rate) } else { 0 };
-    let mut i = if mixed { usize::from(SFB_LONG[rate][mixed_long_bands(rate)]) } else { 0 };
+    let mut i = if mixed {
+        usize::from(SFB_LONG[rate][mixed_long_bands(rate)])
+    } else {
+        0
+    };
     for b in first..13 {
         let lo = usize::from(SFB_SHORT[rate][b]);
         let width = usize::from(SFB_SHORT[rate][b + 1]) - lo;
@@ -570,7 +650,11 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
                     return None;
                 }
                 // 13818-3: io = 2^(-1/4) (intensity_scale 0) or 2^(-1/2).
-                let io: f64 = if right.scalefac_compress & 1 == 1 { 0.5f64.sqrt() } else { 0.5f64.sqrt().sqrt() };
+                let io: f64 = if right.scalefac_compress & 1 == 1 {
+                    0.5f64.sqrt()
+                } else {
+                    0.5f64.sqrt().sqrt()
+                };
                 let p = i32::from(pos);
                 Some(if p == 0 {
                     (1.0, 1.0)
@@ -593,9 +677,17 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
         };
         let xr_r = &g.xr[1];
         if right.block_type == 2 {
-            let first = if right.mixed_block { mixed_first_short(rate) } else { 0 };
+            let first = if right.mixed_block {
+                mixed_first_short(rate)
+            } else {
+                0
+            };
             // Bitstream positions of each short (band, window).
-            let mut start = if right.mixed_block { usize::from(SFB_LONG[rate][mixed_long_bands(rate)]) } else { 0 };
+            let mut start = if right.mixed_block {
+                usize::from(SFB_LONG[rate][mixed_long_bands(rate)])
+            } else {
+                0
+            };
             let mut pos = vec![[0usize; 3]; 13];
             for b in first..13 {
                 let width = usize::from(SFB_SHORT[rate][b + 1] - SFB_SHORT[rate][b]);
@@ -633,7 +725,9 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
             if right.mixed_block && !any_short_nonzero {
                 let long_bands = mixed_long_bands(rate);
                 let nz = g.nonzero[1].min(usize::from(SFB_LONG[rate][long_bands]));
-                let from = (0..long_bands).find(|&b| usize::from(SFB_LONG[rate][b]) >= nz).unwrap_or(long_bands);
+                let from = (0..long_bands)
+                    .find(|&b| usize::from(SFB_LONG[rate][b]) >= nz)
+                    .unwrap_or(long_bands);
                 for b in from..long_bands {
                     let kk = k(sf.l[b], sf.max_l[b]);
                     for line in is_lines
@@ -647,12 +741,19 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
             }
         } else {
             let nz = g.nonzero[1];
-            let from = (0..22).find(|&b| usize::from(SFB_LONG[rate][b]) >= nz).unwrap_or(22);
+            let from = (0..22)
+                .find(|&b| usize::from(SFB_LONG[rate][b]) >= nz)
+                .unwrap_or(22);
             for b in from..22 {
-                let kk =
-                    if b == 21 { last_band(&k, from <= 20, sf.l[20], sf.max_l[20]) } else { k(sf.l[b], sf.max_l[b]) };
-                for line in
-                    is_lines.iter_mut().take(usize::from(SFB_LONG[rate][b + 1])).skip(usize::from(SFB_LONG[rate][b]))
+                let kk = if b == 21 {
+                    last_band(&k, from <= 20, sf.l[20], sf.max_l[20])
+                } else {
+                    k(sf.l[b], sf.max_l[b])
+                };
+                for line in is_lines
+                    .iter_mut()
+                    .take(usize::from(SFB_LONG[rate][b + 1]))
+                    .skip(usize::from(SFB_LONG[rate][b]))
                 {
                     *line = kk;
                 }
@@ -673,7 +774,11 @@ fn stereo(g: &mut GranuleData, gi: &[GranuleInfo; 2], h: &FrameHeader, rate: usi
         below: u8,
         below_max: u8,
     ) -> Option<(f64, f64)> {
-        if below_coded { k(below, below_max) } else { k(0, u8::MAX) }
+        if below_coded {
+            k(below, below_max)
+        } else {
+            k(0, u8::MAX)
+        }
     }
     let (l, r) = g.xr.split_at_mut(1);
     let (l, r) = (&mut l[0], &mut r[0]);

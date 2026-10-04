@@ -13,7 +13,11 @@ pub(crate) type Subbands = Vec<[[f32; 32]; 2]>;
 
 /// The intensity-stereo bound (first subband coded jointly).
 fn bound(h: &FrameHeader, sblimit: usize) -> usize {
-    if h.mode == Mode::JointStereo { (4 + 4 * usize::from(h.mode_extension)).min(sblimit) } else { sblimit }
+    if h.mode == Mode::JointStereo {
+        (4 + 4 * usize::from(h.mode_extension)).min(sblimit)
+    } else {
+        sblimit
+    }
 }
 
 /// Check the frame CRC when present: it covers header bits 16..32 and the
@@ -29,13 +33,20 @@ fn check_crc(frame: &[u8], h: &FrameHeader, bits: usize) -> Result<()> {
     let crc = frame_crc_bits(crc, frame, 48, bits);
     let stored = u16::from_be_bytes([frame[4], frame[5]]);
     if crc != stored {
-        return Err(invalid(format!("CRC mismatch: frame says {stored:04x}, data gives {crc:04x}")));
+        return Err(invalid(format!(
+            "CRC mismatch: frame says {stored:04x}, data gives {crc:04x}"
+        )));
     }
     Ok(())
 }
 
 /// Layer I: 12 time slots of 32 subbands per channel.
-pub(crate) fn decode_layer1(frame: &[u8], h: &FrameHeader, out: &mut Subbands, check: bool) -> Result<()> {
+pub(crate) fn decode_layer1(
+    frame: &[u8],
+    h: &FrameHeader,
+    out: &mut Subbands,
+    check: bool,
+) -> Result<()> {
     let nch = h.channels();
     let bound = bound(h, 32);
     let mut r = BitReader::at(frame, h.header_len() * 8);
@@ -98,7 +109,11 @@ pub(crate) fn decode_layer1(frame: &[u8], h: &FrameHeader, out: &mut Subbands, c
 }
 
 fn layer1_class(nb: u32) -> QuantClass {
-    QuantClass { steps: (1 << nb) - 1, bits: nb, grouped: false }
+    QuantClass {
+        steps: (1 << nb) - 1,
+        bits: nb,
+        grouped: false,
+    }
 }
 
 /// Layer II: 36 time slots of 32 subbands per channel.
@@ -110,7 +125,11 @@ pub(crate) fn decode_layer2(
     check: bool,
 ) -> Result<()> {
     let nch = h.channels();
-    let bitrate = if h.is_free_format() { free_bitrate } else { h.bitrate() };
+    let bitrate = if h.is_free_format() {
+        free_bitrate
+    } else {
+        h.bitrate()
+    };
     let table = AllocTable::select(h.version.is_lsf(), h.sample_rate(), bitrate, nch);
     let sblimit = table.sblimit();
     let bound = bound(h, sblimit);
@@ -122,7 +141,11 @@ pub(crate) fn decode_layer2(
         let chans = if sb < bound { nch } else { 1 };
         for ch in 0..chans {
             let a = r.read(row.nbal)? as usize;
-            alloc[ch][sb] = if a == 0 { None } else { Some(row.classes[a - 1]) };
+            alloc[ch][sb] = if a == 0 {
+                None
+            } else {
+                Some(row.classes[a - 1])
+            };
         }
         if sb >= bound {
             alloc[1][sb] = alloc[0][sb];

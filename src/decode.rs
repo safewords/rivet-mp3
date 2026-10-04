@@ -91,12 +91,19 @@ impl FrameDecoder {
         let h = FrameHeader::parse(frame)?;
         let bitrate = if h.is_free_format() {
             let slots = frame.len() / h.slot_bytes() - usize::from(h.padding);
-            let per = if h.layer == Layer::I { 12 } else { h.samples() / 8 };
+            let per = if h.layer == Layer::I {
+                12
+            } else {
+                h.samples() / 8
+            };
             (slots as u64 * u64::from(h.sample_rate()) / per as u64) as u32
         } else {
             let want = h.frame_len().unwrap_or(0);
             if frame.len() < want {
-                return Err(invalid(format!("frame is {} bytes, its header says {want}", frame.len())));
+                return Err(invalid(format!(
+                    "frame is {} bytes, its header says {want}",
+                    frame.len()
+                )));
             }
             h.bitrate()
         };
@@ -114,10 +121,14 @@ impl FrameDecoder {
         let mut layer3 = None;
         match h.layer {
             Layer::I => layer12::decode_layer1(frame, &h, &mut self.subbands, self.check_crc)?,
-            Layer::II => layer12::decode_layer2(frame, &h, bitrate, &mut self.subbands, self.check_crc)?,
+            Layer::II => {
+                layer12::decode_layer2(frame, &h, bitrate, &mut self.subbands, self.check_crc)?
+            }
             Layer::III => {
                 let len = h.frame_len().unwrap_or(frame.len()).min(frame.len());
-                layer3 = self.l3.decode(&frame[..len], &h, &mut self.subbands, self.check_crc)?;
+                layer3 = self
+                    .l3
+                    .decode(&frame[..len], &h, &mut self.subbands, self.check_crc)?;
             }
         }
         let nch = h.channels();
@@ -179,7 +190,11 @@ pub struct DecoderOptions {
 
 impl Default for DecoderOptions {
     fn default() -> Self {
-        Self { trim_gapless: true, check_crc: false, strict: false }
+        Self {
+            trim_gapless: true,
+            check_crc: false,
+            strict: false,
+        }
     }
 }
 
@@ -307,7 +322,10 @@ impl Decoder {
 
     fn skip(&mut self, n: usize) -> Result<()> {
         if self.opts.strict && n > 0 && self.locked.is_some() {
-            return Err(invalid(format!("{n} bytes between frames at {}", self.base)));
+            return Err(invalid(format!(
+                "{n} bytes between frames at {}",
+                self.base
+            )));
         }
         self.consume(n);
         self.base += n as u64;
@@ -342,7 +360,11 @@ impl Decoder {
             }
             i += 1;
         }
-        if at_end && self.data().len() > at + min { Some(self.data().len() - at) } else { None }
+        if at_end && self.data().len() > at + min {
+            Some(self.data().len() - at)
+        } else {
+            None
+        }
     }
 
     fn drain(&mut self, at_end: bool) -> Result<Vec<Frame>> {
@@ -384,13 +406,20 @@ impl Decoder {
                 continue;
             }
             // Sync search.
-            let Some(start) = self.data().windows(2).position(|w| w[0] == 0xFF && w[1] & 0xE0 == 0xE0) else {
+            let Some(start) = self
+                .data()
+                .windows(2)
+                .position(|w| w[0] == 0xFF && w[1] & 0xE0 == 0xE0)
+            else {
                 let keep = usize::from(self.data().last() == Some(&0xFF));
                 let n = self.data().len() - keep;
                 if n > 0 && !(self.data().len() >= 3 && &self.data()[..3] == b"ID3") {
                     // Trailing ID3v1 / APE tags end up here too.
                     if self.opts.strict && self.locked.is_some() && !at_end {
-                        return Err(invalid(format!("{n} bytes between frames at {}", self.base)));
+                        return Err(invalid(format!(
+                            "{n} bytes between frames at {}",
+                            self.base
+                        )));
                     }
                     self.consume(n);
                     self.base += n as u64;
@@ -404,7 +433,10 @@ impl Decoder {
                 let cut = id3.filter(|&p| p > 0).unwrap_or(start);
                 if cut > 0 {
                     if self.opts.strict && self.locked.is_some() && !self.is_trailing_tag(at_end) {
-                        return Err(invalid(format!("{cut} bytes between frames at {}", self.base)));
+                        return Err(invalid(format!(
+                            "{cut} bytes between frames at {}",
+                            self.base
+                        )));
                     }
                     self.consume(cut);
                     self.base += cut as u64;
@@ -522,15 +554,23 @@ impl Decoder {
     }
 
     fn is_trailing_tag(&self, _at_end: bool) -> bool {
-        self.data().starts_with(b"TAG") || self.data().starts_with(b"APETAGEX") || self.data().starts_with(b"LYRICS")
+        self.data().starts_with(b"TAG")
+            || self.data().starts_with(b"APETAGEX")
+            || self.data().starts_with(b"LYRICS")
     }
 
     fn set_info(&mut self, info: InfoHeader, h: &FrameHeader) {
         if let Some((delay, padding)) = info.delay_padding() {
             let spf = h.samples() as u64;
-            let length =
-                info.frames().map(|f| (u64::from(f) * spf).saturating_sub(u64::from(delay) + u64::from(padding)));
-            self.gapless = Some(Gapless { encoder_delay: delay, padding, skip_start: delay + DECODER_DELAY, length });
+            let length = info.frames().map(|f| {
+                (u64::from(f) * spf).saturating_sub(u64::from(delay) + u64::from(padding))
+            });
+            self.gapless = Some(Gapless {
+                encoder_delay: delay,
+                padding,
+                skip_start: delay + DECODER_DELAY,
+                length,
+            });
         }
         self.info = Some(info);
     }
@@ -538,12 +578,17 @@ impl Decoder {
     fn check_accounting(&mut self, frame: &Frame) -> Result<()> {
         let Some(a) = frame.layer3 else {
             if frame.header.layer == Layer::III {
-                return Err(invalid("main_data_begin points before the start of the stream"));
+                return Err(invalid(
+                    "main_data_begin points before the start of the stream",
+                ));
             }
             return Ok(());
         };
         if !a.exact {
-            return Err(invalid(format!("Huffman data does not end at part2_3_length (frame at {})", frame.position)));
+            return Err(invalid(format!(
+                "Huffman data does not end at part2_3_length (frame at {})",
+                frame.position
+            )));
         }
         if let Some(unused) = self.unused_main
             && a.main_data_begin > unused

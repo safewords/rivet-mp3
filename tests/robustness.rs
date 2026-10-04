@@ -2,13 +2,18 @@
 //! truncation, tags around the frames, free format, any chunking. Errors
 //! are allowed (in strict mode); panics are not.
 
-use mp3::{BitrateMode, Decoder, DecoderOptions, Encoder, EncoderConfig, FrameDecoder, FrameHeader};
+use mp3::{
+    BitrateMode, Decoder, DecoderOptions, Encoder, EncoderConfig, FrameDecoder, FrameHeader,
+};
 
 struct Rng(u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         self.0 >> 33
     }
 }
@@ -25,7 +30,10 @@ fn signal(n: usize, nch: usize) -> Vec<f32> {
 /// Encoded frames (no tag frame).
 fn frames(cfg: EncoderConfig, seconds: f32) -> Vec<Vec<u8>> {
     let mut enc = Encoder::new(cfg).unwrap();
-    let pcm = signal((seconds * cfg.sample_rate as f32) as usize, usize::from(cfg.channels));
+    let pcm = signal(
+        (seconds * cfg.sample_rate as f32) as usize,
+        usize::from(cfg.channels),
+    );
     let mut f = enc.encode(&pcm);
     f.extend(enc.flush());
     f
@@ -42,7 +50,10 @@ fn decode_all(bytes: &[u8], opts: DecoderOptions, chunk: usize) -> mp3::Result<V
 }
 
 fn pcm(frames: &[mp3::Frame]) -> Vec<f32> {
-    frames.iter().flat_map(|f| f.samples.iter().copied()).collect()
+    frames
+        .iter()
+        .flat_map(|f| f.samples.iter().copied())
+        .collect()
 }
 
 #[test]
@@ -51,10 +62,25 @@ fn garbage_never_panics() {
     for len in [0usize, 1, 3, 4, 100, 4096, 20_000] {
         let bytes: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
         for strict in [false, true] {
-            let _ = decode_all(&bytes, DecoderOptions { strict, ..Default::default() }, 333);
+            let _ = decode_all(
+                &bytes,
+                DecoderOptions {
+                    strict,
+                    ..Default::default()
+                },
+                333,
+            );
         }
         // Garbage that is all sync words.
-        let syncs: Vec<u8> = (0..len).map(|i| if i % 2 == 0 { 0xFF } else { 0xE0 | rng.next() as u8 }).collect();
+        let syncs: Vec<u8> = (0..len)
+            .map(|i| {
+                if i % 2 == 0 {
+                    0xFF
+                } else {
+                    0xE0 | rng.next() as u8
+                }
+            })
+            .collect();
         let _ = decode_all(&syncs, DecoderOptions::default(), 50);
         let _ = FrameDecoder::new().decode_frame(&syncs);
     }
@@ -65,8 +91,17 @@ fn damaged_streams_never_panic() {
     let mut rng = Rng(2);
     for cfg in [
         EncoderConfig::default(),
-        EncoderConfig { sample_rate: 22_050, bitrate: BitrateMode::Cbr(64_000), ..Default::default() },
-        EncoderConfig { sample_rate: 8_000, channels: 1, bitrate: BitrateMode::Vbr(5), ..Default::default() },
+        EncoderConfig {
+            sample_rate: 22_050,
+            bitrate: BitrateMode::Cbr(64_000),
+            ..Default::default()
+        },
+        EncoderConfig {
+            sample_rate: 8_000,
+            channels: 1,
+            bitrate: BitrateMode::Vbr(5),
+            ..Default::default()
+        },
     ] {
         let clean: Vec<u8> = frames(cfg, 1.0).concat();
         for round in 0..60 {
@@ -91,9 +126,25 @@ fn damaged_streams_never_panic() {
                     }
                 }
             }
-            let out = decode_all(&b, DecoderOptions::default(), 1 + rng.next() as usize % 2000);
-            assert!(out.is_ok(), "the lenient decoder conceals damage: {:?}", out.err());
-            let _ = decode_all(&b, DecoderOptions { strict: true, check_crc: true, ..Default::default() }, 700);
+            let out = decode_all(
+                &b,
+                DecoderOptions::default(),
+                1 + rng.next() as usize % 2000,
+            );
+            assert!(
+                out.is_ok(),
+                "the lenient decoder conceals damage: {:?}",
+                out.err()
+            );
+            let _ = decode_all(
+                &b,
+                DecoderOptions {
+                    strict: true,
+                    check_crc: true,
+                    ..Default::default()
+                },
+                700,
+            );
         }
     }
 }
@@ -103,7 +154,11 @@ fn chunking_does_not_change_the_output() {
     let bytes: Vec<u8> = frames(EncoderConfig::default(), 1.0).concat();
     let whole = pcm(&decode_all(&bytes, DecoderOptions::default(), bytes.len()).unwrap());
     for chunk in [1, 7, 418, 1000] {
-        assert_eq!(pcm(&decode_all(&bytes, DecoderOptions::default(), chunk).unwrap()), whole, "chunk {chunk}");
+        assert_eq!(
+            pcm(&decode_all(&bytes, DecoderOptions::default(), chunk).unwrap()),
+            whole,
+            "chunk {chunk}"
+        );
     }
 }
 
@@ -128,7 +183,11 @@ fn tags_around_the_frames_are_skipped() {
 /// the frame length found from the distance between syncs.
 #[test]
 fn free_format() {
-    let cfg = EncoderConfig { sample_rate: 48_000, bitrate: BitrateMode::Cbr(160_000), ..Default::default() };
+    let cfg = EncoderConfig {
+        sample_rate: 48_000,
+        bitrate: BitrateMode::Cbr(160_000),
+        ..Default::default()
+    };
     let f = frames(cfg, 1.0);
     let fixed: Vec<u8> = f.concat();
     let free: Vec<u8> = f
@@ -142,15 +201,32 @@ fn free_format() {
     let h = FrameHeader::parse(&free).unwrap();
     assert!(h.is_free_format());
     let a = decode_all(&fixed, DecoderOptions::default(), 999).unwrap();
-    let b = decode_all(&free, DecoderOptions { strict: true, ..Default::default() }, 999).unwrap();
+    let b = decode_all(
+        &free,
+        DecoderOptions {
+            strict: true,
+            ..Default::default()
+        },
+        999,
+    )
+    .unwrap();
     assert_eq!(pcm(&a), pcm(&b));
-    assert!(b.iter().all(|fr| fr.bitrate == 160_000), "measured free-format bit rate");
+    assert!(
+        b.iter().all(|fr| fr.bitrate == 160_000),
+        "measured free-format bit rate"
+    );
 }
 
 /// A VBRI header (Fraunhofer's) is recognised, and its frame not played.
 #[test]
 fn vbri_header() {
-    let f = frames(EncoderConfig { bitrate: BitrateMode::Cbr(128_000), ..Default::default() }, 0.5);
+    let f = frames(
+        EncoderConfig {
+            bitrate: BitrateMode::Cbr(128_000),
+            ..Default::default()
+        },
+        0.5,
+    );
     let mut tag = vec![0u8; f[0].len()];
     tag[..4].copy_from_slice(&f[0][..4]);
     tag[2] &= !0x02; // no padding
@@ -163,7 +239,10 @@ fn vbri_header() {
     v[14..18].copy_from_slice(&(f.len() as u32).to_be_bytes());
     let mut stream = tag;
     stream.extend(f.concat());
-    let mut d = Decoder::with_options(DecoderOptions { trim_gapless: false, ..Default::default() });
+    let mut d = Decoder::with_options(DecoderOptions {
+        trim_gapless: false,
+        ..Default::default()
+    });
     let mut out = d.decode(&stream).unwrap();
     out.extend(d.flush().unwrap());
     match d.info() {
@@ -179,7 +258,11 @@ fn vbri_header() {
 /// The gapless figures and the trimming they drive.
 #[test]
 fn gapless_trimming() {
-    let cfg = EncoderConfig { channels: 1, bitrate: BitrateMode::Vbr(4), ..Default::default() };
+    let cfg = EncoderConfig {
+        channels: 1,
+        bitrate: BitrateMode::Vbr(4),
+        ..Default::default()
+    };
     let n = 12_345;
     let input = signal(n, 1);
     let mut enc = Encoder::new(cfg).unwrap();
@@ -189,12 +272,23 @@ fn gapless_trimming() {
     stream.extend(f.concat());
     let trimmed = pcm(&decode_all(&stream, DecoderOptions::default(), 512).unwrap());
     assert_eq!(trimmed.len(), n);
-    let untrimmed = pcm(&decode_all(&stream, DecoderOptions { trim_gapless: false, ..Default::default() }, 512).unwrap());
+    let untrimmed = pcm(&decode_all(
+        &stream,
+        DecoderOptions {
+            trim_gapless: false,
+            ..Default::default()
+        },
+        512,
+    )
+    .unwrap());
     assert_eq!(untrimmed.len(), f.len() * 1152);
     let skip = (enc.delay() + mp3::xing::DECODER_DELAY) as usize;
     assert_eq!(&untrimmed[skip..skip + n], &trimmed[..]);
     let mut d = Decoder::new();
     d.decode(&stream).unwrap();
     let g = d.gapless().unwrap();
-    assert_eq!((g.encoder_delay, g.padding, g.length), (enc.delay(), enc.padding(), Some(n as u64)));
+    assert_eq!(
+        (g.encoder_delay, g.padding, g.length),
+        (enc.delay(), enc.padding(), Some(n as u64))
+    );
 }

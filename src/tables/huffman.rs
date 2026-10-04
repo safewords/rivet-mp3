@@ -81,25 +81,33 @@ pub(crate) fn pair_table(base: usize) -> Option<&'static PairTable> {
     })
 }
 
-pub(crate) static T1: PairTable = PairTable { xlen: 2, codes: &[0b1, 0b001, 0b01, 0b000], lens: &[1, 3, 2, 3] };
+pub(crate) static T1: PairTable = PairTable {
+    xlen: 2,
+    codes: &[0b1, 0b001, 0b01, 0b000],
+    lens: &[1, 3, 2, 3],
+};
 
 pub(crate) static T2: PairTable = PairTable {
     xlen: 3,
-    codes: &[0b1, 0b010, 0b000001, 0b011, 0b001, 0b00001, 0b00011, 0b00010, 0b000000],
+    codes: &[
+        0b1, 0b010, 0b000001, 0b011, 0b001, 0b00001, 0b00011, 0b00010, 0b000000,
+    ],
     lens: &[1, 3, 6, 3, 3, 5, 5, 5, 6],
 };
 
 pub(crate) static T3: PairTable = PairTable {
     xlen: 3,
-    codes: &[0b11, 0b10, 0b000001, 0b001, 0b01, 0b00001, 0b00011, 0b00010, 0b000000],
+    codes: &[
+        0b11, 0b10, 0b000001, 0b001, 0b01, 0b00001, 0b00011, 0b00010, 0b000000,
+    ],
     lens: &[2, 2, 6, 3, 2, 5, 5, 5, 6],
 };
 
 pub(crate) static T5: PairTable = PairTable {
     xlen: 4,
     codes: &[
-        0x0001, 0x0002, 0x0006, 0x0005, 0x0003, 0x0001, 0x0004, 0x0004, 0x0007, 0x0005, 0x0007, 0x0001, 0x0006, 0x0001,
-        0x0001, 0x0000,
+        0x0001, 0x0002, 0x0006, 0x0005, 0x0003, 0x0001, 0x0004, 0x0004, 0x0007, 0x0005, 0x0007,
+        0x0001, 0x0006, 0x0001, 0x0001, 0x0000,
     ],
     lens: &[1, 3, 6, 7, 3, 3, 6, 7, 6, 6, 7, 8, 7, 6, 7, 8],
 };
@@ -107,8 +115,8 @@ pub(crate) static T5: PairTable = PairTable {
 pub(crate) static T6: PairTable = PairTable {
     xlen: 4,
     codes: &[
-        0x0007, 0x0003, 0x0005, 0x0001, 0x0006, 0x0002, 0x0003, 0x0002, 0x0005, 0x0004, 0x0004, 0x0001, 0x0003, 0x0003,
-        0x0002, 0x0000,
+        0x0007, 0x0003, 0x0005, 0x0001, 0x0006, 0x0002, 0x0003, 0x0002, 0x0005, 0x0004, 0x0004,
+        0x0001, 0x0003, 0x0003, 0x0002, 0x0000,
     ],
     lens: &[3, 3, 5, 7, 3, 2, 4, 5, 4, 4, 5, 6, 6, 5, 6, 7],
 };
@@ -245,6 +253,7 @@ pub(crate) static T12: PairTable = PairTable {
     ],
 };
 
+#[rustfmt::skip]
 pub(crate) static T13: PairTable = PairTable {
     xlen: 16,
     codes: &[
@@ -301,6 +310,7 @@ pub(crate) static T13: PairTable = PairTable {
     ],
 };
 
+#[rustfmt::skip]
 pub(crate) static T15: PairTable = PairTable {
     xlen: 16,
     codes: &[
@@ -357,6 +367,7 @@ pub(crate) static T15: PairTable = PairTable {
     ],
 };
 
+#[rustfmt::skip]
 pub(crate) static T16: PairTable = PairTable {
     xlen: 16,
     codes: &[
@@ -413,6 +424,7 @@ pub(crate) static T16: PairTable = PairTable {
     ],
 };
 
+#[rustfmt::skip]
 pub(crate) static T24: PairTable = PairTable {
     xlen: 16,
     codes: &[
@@ -494,7 +506,10 @@ mod tests {
             assert!(c >> l == 0, "{name}: code {i} longer than its length");
             for (j, (&c2, &l2)) in codes.iter().zip(lens).enumerate() {
                 if i != j && l2 >= l {
-                    assert!(c2 >> (l2 - l) != c, "{name}: code {i} is a prefix of code {j}");
+                    assert!(
+                        c2 >> (l2 - l) != c,
+                        "{name}: code {i} is a prefix of code {j}"
+                    );
                 }
             }
         }

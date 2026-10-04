@@ -16,12 +16,20 @@ pub(crate) struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub(crate) fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0, end: data.len() * 8 }
+        Self {
+            data,
+            pos: 0,
+            end: data.len() * 8,
+        }
     }
 
     /// A reader over `data` starting at bit `pos`.
     pub(crate) fn at(data: &'a [u8], pos: usize) -> Self {
-        Self { data, pos, end: data.len() * 8 }
+        Self {
+            data,
+            pos,
+            end: data.len() * 8,
+        }
     }
 
     pub(crate) fn pos(&self) -> usize {
@@ -99,7 +107,11 @@ impl BitWriter {
 
     /// Bits written so far.
     pub(crate) fn len(&self) -> usize {
-        if self.used == 0 { self.bytes.len() * 8 } else { (self.bytes.len() - 1) * 8 + self.used as usize }
+        if self.used == 0 {
+            self.bytes.len() * 8
+        } else {
+            (self.bytes.len() - 1) * 8 + self.used as usize
+        }
     }
 
     /// Write the low `n` (0..=32) bits of `v`.

@@ -24,7 +24,11 @@ use crate::tables::layer3::{PRETAB, SLEN};
 /// |ix|^(4/3) for every codable magnitude.
 fn pow43() -> &'static [f64] {
     static T: OnceLock<Vec<f64>> = OnceLock::new();
-    T.get_or_init(|| (0..=MAX_VALUE as usize + 1).map(|i| (i as f64).powf(4.0 / 3.0)).collect())
+    T.get_or_init(|| {
+        (0..=MAX_VALUE as usize + 1)
+            .map(|i| (i as f64).powf(4.0 / 3.0))
+            .collect()
+    })
 }
 
 /// A spectrum's magnitudes and their 3/4 powers, which every quantisation
@@ -36,7 +40,10 @@ pub(crate) struct Lines {
 
 impl Lines {
     pub(crate) fn new(xr: &[f32; 576]) -> Box<Lines> {
-        let mut l = Box::new(Lines { xa: [0.0; 576], x34: [0.0; 576] });
+        let mut l = Box::new(Lines {
+            xa: [0.0; 576],
+            x34: [0.0; 576],
+        });
         for ((a, c), &v) in l.xa.iter_mut().zip(l.x34.iter_mut()).zip(xr) {
             *a = f64::from(v).abs();
             *c = a.powf(0.75);
@@ -52,7 +59,12 @@ impl Lines {
 fn steps(s: i32) -> (f64, f64) {
     const LO: i32 = -1024;
     static T: OnceLock<Vec<(f64, f64)>> = OnceLock::new();
-    let compute = |s: i32| ((-3.0 * f64::from(s) / 16.0).exp2(), (f64::from(s) / 4.0).exp2());
+    let compute = |s: i32| {
+        (
+            (-3.0 * f64::from(s) / 16.0).exp2(),
+            (f64::from(s) / 4.0).exp2(),
+        )
+    };
     let t = T.get_or_init(|| (LO..1024).map(compute).collect());
     match s.checked_sub(LO).and_then(|i| t.get(i as usize)) {
         Some(&v) => v,
@@ -214,7 +226,13 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
     }
     // Band maxima of the scalefactor fields: 15 for the low bands (4 bits),
     // 7 for the high (3 bits) — MPEG-1 slen1 / slen2 and LSF slen0..3 alike.
-    let sf_max = |b: usize| if (short && b < 6) || (!short && b < 11) { 15i32 } else { 7 };
+    let sf_max = |b: usize| {
+        if (short && b < 6) || (!short && b < 11) {
+            15i32
+        } else {
+            7
+        }
+    };
     let mut best: Option<(bool, Quantised)> = None;
     // Every combination of scalefac_scale and (MPEG-1 long blocks) preflag:
     // each meets the allowances as far as its scalefactor range reaches; the
@@ -226,7 +244,13 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
     };
     for &(scale_bit, pre) in variants {
         let m = if scale_bit { 4 } else { 2 };
-        let pretab = |b: usize| if pre && !short && b < 22 { i32::from(PRETAB[b]) } else { 0 };
+        let pretab = |b: usize| {
+            if pre && !short && b < 22 {
+                i32::from(PRETAB[b])
+            } else {
+                0
+            }
+        };
         let mut q = Quantised::silent();
         q.scalefac_scale = scale_bit;
         q.preflag = pre;
@@ -251,7 +275,12 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         }
         // No band needs coding: as coarse as the values allow (bands that
         // need nothing must not pull the step down).
-        let required = base[..windows].iter().copied().max().filter(|&b| b > i32::MIN / 4).unwrap_or(45);
+        let required = base[..windows]
+            .iter()
+            .copied()
+            .max()
+            .filter(|&b| b > i32::MIN / 4)
+            .unwrap_or(45);
         let top = required.max(floor);
         let mut gg = (top + 210).clamp(0, 255);
         let mut clipped = false;
@@ -264,7 +293,13 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
         }
         for (&(_, _, _, w, b), r) in plan.bands.iter().zip(&req) {
             let Some(s) = *r else { continue };
-            let base = gg - 210 - if short { 8 * i32::from(q.subblock_gain[w]) } else { 0 };
+            let base = gg
+                - 210
+                - if short {
+                    8 * i32::from(q.subblock_gain[w])
+                } else {
+                    0
+                };
             let need = ((base - s + m - 1).div_euclid(m) - pretab(b)).max(0);
             let sf = need.min(sf_max(b));
             clipped |= need > sf;
@@ -284,7 +319,11 @@ pub(crate) fn quantise(sp: &Spectrum, scale: f64) -> Quantised {
             gg += 1;
         }
         choose_scalefac_compress(&mut q, short, sp.lsf);
-        let region1_ws = if short { 3 * usize::from(sp.short_edges[3]) } else { usize::from(sp.long_edges[8]) };
+        let region1_ws = if short {
+            3 * usize::from(sp.short_edges[3])
+        } else {
+            usize::from(sp.long_edges[8])
+        };
         q.coding = huffman::choose(&q.ix, sp.long_edges, sp.block_type != 0, region1_ws);
         let better = match &best {
             None => true,
@@ -322,7 +361,11 @@ fn fill_values(q: &mut Quantised, plan: &BandPlan, x34: &[f64], short: bool) -> 
 
 /// The pretab amplification of long band `b` when preflag is set.
 fn pre(q: &Quantised, b: usize) -> i32 {
-    if q.preflag && b < 22 { i32::from(PRETAB[b]) } else { 0 }
+    if q.preflag && b < 22 {
+        i32::from(PRETAB[b])
+    } else {
+        0
+    }
 }
 
 /// Apply signs from the spectrum.
@@ -344,8 +387,11 @@ fn choose_scalefac_compress(q: &mut Quantised, short: bool, lsf: bool) {
         // Table row 0 of 13818-3: four groups (6, 5, 5, 5 long bands; 3
         // short bands, i.e. 9 values, each); slen0, slen1 up to 4 bits,
         // slen2, slen3 up to 3.
-        let groups: [(usize, usize); 4] =
-            if short { [(0, 3), (3, 6), (6, 9), (9, 12)] } else { [(0, 6), (6, 11), (11, 16), (16, 21)] };
+        let groups: [(usize, usize); 4] = if short {
+            [(0, 3), (3, 6), (6, 9), (9, 12)]
+        } else {
+            [(0, 6), (6, 11), (11, 16), (16, 21)]
+        };
         let mut slen = [0u8; 4];
         for (g, &(a, b)) in groups.iter().enumerate() {
             let max = if short {
@@ -356,16 +402,27 @@ fn choose_scalefac_compress(q: &mut Quantised, short: bool, lsf: bool) {
             slen[g] = bits_for(max);
         }
         let counts: [u32; 4] = if short { [9, 9, 9, 9] } else { [6, 5, 5, 5] };
-        q.part2_bits = slen.iter().zip(counts).map(|(&s, c)| u32::from(s) * c).sum();
-        q.scalefac_compress =
-            ((u16::from(slen[0]) * 5 + u16::from(slen[1])) << 4) + (u16::from(slen[2]) << 2) + u16::from(slen[3]);
+        q.part2_bits = slen
+            .iter()
+            .zip(counts)
+            .map(|(&s, c)| u32::from(s) * c)
+            .sum();
+        q.scalefac_compress = ((u16::from(slen[0]) * 5 + u16::from(slen[1])) << 4)
+            + (u16::from(slen[2]) << 2)
+            + u16::from(slen[3]);
         q.slen = slen;
         return;
     }
     let (lo_max, hi_max) = if short {
-        ((0..6).flat_map(|b| q.sf_s[b]).max().unwrap_or(0), (6..12).flat_map(|b| q.sf_s[b]).max().unwrap_or(0))
+        (
+            (0..6).flat_map(|b| q.sf_s[b]).max().unwrap_or(0),
+            (6..12).flat_map(|b| q.sf_s[b]).max().unwrap_or(0),
+        )
     } else {
-        (q.sf_l[..11].iter().copied().max().unwrap_or(0), q.sf_l[11..21].iter().copied().max().unwrap_or(0))
+        (
+            q.sf_l[..11].iter().copied().max().unwrap_or(0),
+            q.sf_l[11..21].iter().copied().max().unwrap_or(0),
+        )
     };
     let (n1, n2) = if short { (18u32, 18u32) } else { (11, 10) };
     let (need1, need2) = (bits_for(lo_max), bits_for(hi_max));

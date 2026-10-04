@@ -50,22 +50,33 @@ pub enum Mode {
 /// The bit rates (kbit/s) by layer and bitrate_index; index 0 is free
 /// format (15 is forbidden). ISO/IEC 11172-3 2.4.2.3.
 pub const BITRATES_MPEG1: [[u32; 15]; 3] = [
-    [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
-    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    [
+        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
+    ],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
+    ],
+    [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ],
 ];
 /// Bit rates for the lower sampling frequencies (MPEG-2, and MPEG-2.5),
 /// ISO/IEC 13818-3 2.4.2.3.
 pub const BITRATES_LSF: [[u32; 15]; 3] = [
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
+    ],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
 ];
 
 /// Sampling frequencies by version (MPEG-1, MPEG-2, MPEG-2.5) and
 /// sampling_frequency index.
-pub const SAMPLE_RATES: [[u32; 3]; 3] =
-    [[44_100, 48_000, 32_000], [22_050, 24_000, 16_000], [11_025, 12_000, 8_000]];
+pub const SAMPLE_RATES: [[u32; 3]; 3] = [
+    [44_100, 48_000, 32_000],
+    [22_050, 24_000, 16_000],
+    [11_025, 12_000, 8_000],
+];
 
 /// A parsed frame header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,7 +227,11 @@ impl FrameHeader {
 
     /// The bit rate in bit/s; 0 for free format.
     pub fn bitrate(&self) -> u32 {
-        let table = if self.version.is_lsf() { &BITRATES_LSF } else { &BITRATES_MPEG1 };
+        let table = if self.version.is_lsf() {
+            &BITRATES_LSF
+        } else {
+            &BITRATES_MPEG1
+        };
         table[self.layer_index()][usize::from(self.bitrate_index)] * 1000
     }
 

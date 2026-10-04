@@ -33,7 +33,11 @@ fn bark(f: f64) -> f64 {
 fn spreading(dz: f64) -> f64 {
     let t = dz + 0.474;
     let db = 15.81 + 7.5 * t - 17.5 * (1.0 + t * t).sqrt();
-    if db < -60.0 { 0.0 } else { 10f64.powf(db / 10.0) }
+    if db < -60.0 {
+        0.0
+    } else {
+        10f64.powf(db / 10.0)
+    }
 }
 
 /// Absolute threshold of hearing, dB SPL (Terhardt).
@@ -62,22 +66,37 @@ impl Bands {
         let n = edges.len() - 1;
         let lo: Vec<usize> = edges[..n].iter().map(|&e| usize::from(e)).collect();
         let hi: Vec<usize> = edges[1..].iter().map(|&e| usize::from(e)).collect();
-        let z: Vec<f64> = (0..n).map(|b| bark((lo[b] + hi[b]) as f64 * 0.5 * line_hz)).collect();
-        let spread: Vec<Vec<f64>> =
-            (0..n).map(|b| (0..n).map(|j| spreading(z[b] - z[j])).collect()).collect();
+        let z: Vec<f64> = (0..n)
+            .map(|b| bark((lo[b] + hi[b]) as f64 * 0.5 * line_hz))
+            .collect();
+        let spread: Vec<Vec<f64>> = (0..n)
+            .map(|b| (0..n).map(|j| spreading(z[b] - z[j])).collect())
+            .collect();
         let norm: Vec<f64> = (0..n)
             .map(|b| {
                 let w = (hi[b] - lo[b]) as f64;
-                (0..n).map(|j| spread[b][j] * (hi[j] - lo[j]) as f64).sum::<f64>() / w
+                (0..n)
+                    .map(|j| spread[b][j] * (hi[j] - lo[j]) as f64)
+                    .sum::<f64>()
+                    / w
             })
             .collect();
         let ath = (0..n)
             .map(|b| {
-                let min_db = (lo[b]..hi[b]).map(|i| ath_db((i as f64 + 0.5) * line_hz)).fold(f64::MAX, f64::min);
+                let min_db = (lo[b]..hi[b])
+                    .map(|i| ath_db((i as f64 + 0.5) * line_hz))
+                    .fold(f64::MAX, f64::min);
                 full_scale_tone * 10f64.powf((min_db - 96.0) / 10.0)
             })
             .collect();
-        Bands { lo, hi, z, spread, norm, ath }
+        Bands {
+            lo,
+            hi,
+            z,
+            spread,
+            norm,
+            ath,
+        }
     }
 
     /// Thresholds for one spectrum (`x`, lines indexed by `lo..hi`),
@@ -95,7 +114,10 @@ impl Bands {
             // Spectral flatness: geometric over arithmetic mean of line
             // energies.
             let m = lines.len() as f64;
-            let log_sum: f64 = lines.iter().map(|&v| (f64::from(v) * f64::from(v) + 1e-30).ln()).sum();
+            let log_sum: f64 = lines
+                .iter()
+                .map(|&v| (f64::from(v) * f64::from(v) + 1e-30).ln())
+                .sum();
             let geo = (log_sum / m).exp();
             let sfm_db = 10.0 * (geo / (e / m)).log10();
             tonality[b] = (sfm_db / -25.0).clamp(0.0, 1.0);
@@ -118,21 +140,42 @@ pub(crate) enum Mask {
     /// Long, start and stop blocks: 22 long bands.
     Long { thr: [f64; 22], energy: [f64; 22] },
     /// Short blocks: 13 short bands by 3 windows.
-    Short { thr: [[f64; 3]; 13], energy: [[f64; 3]; 13] },
+    Short {
+        thr: [[f64; 3]; 13],
+        energy: [[f64; 3]; 13],
+    },
 }
 
 impl Mask {
     /// Perceptual entropy estimate (bits): sum over bands of
     /// width * log2(1 + sqrt(energy / threshold)).
     pub(crate) fn pe(&self, long_edges: &[u16; 23], short_edges: &[u16; 14]) -> f64 {
-        let term = |w: f64, e: f64, t: f64| if e > t { w * (1.0 + (e / t).sqrt()).log2() } else { 0.0 };
+        let term = |w: f64, e: f64, t: f64| {
+            if e > t {
+                w * (1.0 + (e / t).sqrt()).log2()
+            } else {
+                0.0
+            }
+        };
         match self {
             Mask::Long { thr, energy } => (0..22)
-                .map(|b| term(f64::from(long_edges[b + 1] - long_edges[b]), energy[b], thr[b]))
+                .map(|b| {
+                    term(
+                        f64::from(long_edges[b + 1] - long_edges[b]),
+                        energy[b],
+                        thr[b],
+                    )
+                })
                 .sum(),
             Mask::Short { thr, energy } => (0..13)
                 .flat_map(|b| (0..3).map(move |w| (b, w)))
-                .map(|(b, w)| term(f64::from(short_edges[b + 1] - short_edges[b]), energy[b][w], thr[b][w]))
+                .map(|(b, w)| {
+                    term(
+                        f64::from(short_edges[b + 1] - short_edges[b]),
+                        energy[b][w],
+                        thr[b][w],
+                    )
+                })
                 .sum(),
         }
     }
@@ -142,9 +185,10 @@ impl Mask {
     /// that noise kept below them in M and S stays below them in L and R).
     pub(crate) fn min(&self, other: &Mask) -> Mask {
         match (self, other) {
-            (Mask::Long { thr: a, energy }, Mask::Long { thr: b, .. }) => {
-                Mask::Long { thr: std::array::from_fn(|i| a[i].min(b[i])), energy: *energy }
-            }
+            (Mask::Long { thr: a, energy }, Mask::Long { thr: b, .. }) => Mask::Long {
+                thr: std::array::from_fn(|i| a[i].min(b[i])),
+                energy: *energy,
+            },
             (Mask::Short { thr: a, energy }, Mask::Short { thr: b, .. }) => Mask::Short {
                 thr: std::array::from_fn(|i| std::array::from_fn(|w| a[i][w].min(b[i][w]))),
                 energy: *energy,
@@ -155,7 +199,12 @@ impl Mask {
 
     /// Replace the energies (keeping the thresholds) with those of another
     /// spectrum: used when the channel coded is M or S.
-    pub(crate) fn with_energy_of(&self, x: &[f32; 576], long_edges: &[u16; 23], short_edges: &[u16; 14]) -> Mask {
+    pub(crate) fn with_energy_of(
+        &self,
+        x: &[f32; 576],
+        long_edges: &[u16; 23],
+        short_edges: &[u16; 14],
+    ) -> Mask {
         match self {
             Mask::Long { thr, .. } => {
                 let energy = std::array::from_fn(|b| {
@@ -256,8 +305,9 @@ fn full_scale_energy(sample_rate: u32) -> (f64, f64) {
     let mut a = Analysis::default();
     let mut slots = Vec::new();
     for blk in 0..n / 32 {
-        let input: Vec<f32> =
-            (0..32).map(|i| ((2.0 * PI * f * (blk * 32 + i) as f64) / f64::from(sample_rate)).sin() as f32).collect();
+        let input: Vec<f32> = (0..32)
+            .map(|i| ((2.0 * PI * f * (blk * 32 + i) as f64) / f64::from(sample_rate)).sin() as f32)
+            .collect();
         let mut s = [0.0; 32];
         a.run(&input, &mut s);
         slots.push(s);
@@ -269,7 +319,11 @@ fn full_scale_energy(sample_rate: u32) -> (f64, f64) {
             let mut x = [0.0f64; 36];
             for (i, v) in x.iter_mut().enumerate() {
                 let t = (g - 1) * 18 + i;
-                *v = if sb % 2 == 1 && i % 2 == 1 { -slots[t][sb] } else { slots[t][sb] };
+                *v = if sb % 2 == 1 && i % 2 == 1 {
+                    -slots[t][sb]
+                } else {
+                    slots[t][sb]
+                };
             }
             let mut c = [0.0f32; 18];
             mdct(&x, bt, &mut c);

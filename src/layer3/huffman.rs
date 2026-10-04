@@ -6,7 +6,9 @@ use std::sync::OnceLock;
 
 use crate::bits::BitReader;
 use crate::error::{Result, invalid};
-use crate::tables::huffman::{QUAD_A_CODES, QUAD_A_LENS, QUAD_B_CODES, QUAD_B_LENS, TABLE_INFO, pair_table};
+use crate::tables::huffman::{
+    QUAD_A_CODES, QUAD_A_LENS, QUAD_B_CODES, QUAD_B_LENS, TABLE_INFO, pair_table,
+};
 
 /// A binary decoding tree: `nodes[i]` holds the two children of node `i`;
 /// a child >= 0x8000 is a leaf carrying symbol `child - 0x8000`. The first
@@ -85,7 +87,9 @@ impl Tree {
                 r.skip(depth as usize)?;
                 return Ok((e & 0xFFFF) as usize);
             }
-            KIND_EMPTY if depth < avail => return Err(invalid("code word matches no Huffman table entry")),
+            KIND_EMPTY if depth < avail => {
+                return Err(invalid("code word matches no Huffman table entry"));
+            }
             KIND_NODE if depth < avail => ((e & 0xFFFF) as usize, LUT_BITS),
             _ => return Err(invalid("Huffman data ends inside a code word")),
         };
@@ -126,7 +130,11 @@ pub(crate) fn tables() -> &'static Tables {
             .collect();
         let a: Vec<u32> = QUAD_A_CODES.iter().map(|&c| u32::from(c)).collect();
         let b: Vec<u32> = QUAD_B_CODES.iter().map(|&c| u32::from(c)).collect();
-        Tables { pairs, quad_a: Tree::build(&a, &QUAD_A_LENS), quad_b: Tree::build(&b, &QUAD_B_LENS) }
+        Tables {
+            pairs,
+            quad_a: Tree::build(&a, &QUAD_A_LENS),
+            quad_b: Tree::build(&b, &QUAD_B_LENS),
+        }
     })
 }
 
@@ -168,8 +176,17 @@ pub(crate) fn decode_pairs(r: &mut BitReader, table_select: u8, out: &mut [i32])
 /// Decode one count1 quadruple (v, w, x, y) with table A or B.
 pub(crate) fn decode_quad(r: &mut BitReader, table_b: bool) -> Result<[i32; 4]> {
     let t = tables();
-    let sym = if table_b { t.quad_b.decode(r)? } else { t.quad_a.decode(r)? };
-    let mut q = [((sym >> 3) & 1) as i32, ((sym >> 2) & 1) as i32, ((sym >> 1) & 1) as i32, (sym & 1) as i32];
+    let sym = if table_b {
+        t.quad_b.decode(r)?
+    } else {
+        t.quad_a.decode(r)?
+    };
+    let mut q = [
+        ((sym >> 3) & 1) as i32,
+        ((sym >> 2) & 1) as i32,
+        ((sym >> 1) & 1) as i32,
+        (sym & 1) as i32,
+    ];
     for v in q.iter_mut() {
         if *v != 0 && r.bit()? {
             *v = -*v;
@@ -203,7 +220,12 @@ mod tests {
     #[test]
     fn the_lookup_table_decodes_as_the_walk_does() {
         let t = tables();
-        let trees: Vec<&Tree> = t.pairs.iter().flatten().chain([&t.quad_a, &t.quad_b]).collect();
+        let trees: Vec<&Tree> = t
+            .pairs
+            .iter()
+            .flatten()
+            .chain([&t.quad_a, &t.quad_b])
+            .collect();
         let mut seed = 31u32;
         for tree in trees {
             for case in 0..3000 {
@@ -215,7 +237,11 @@ mod tests {
                 let mut r = BitReader::new(&bytes);
                 r.set_end(avail as usize);
                 let got = tree.decode(&mut r).ok().map(|s| (s, r.pos() as u32));
-                assert_eq!(got, walk(tree, bits & 0xFF_FFFF, avail), "bits {bits:06x} avail {avail}");
+                assert_eq!(
+                    got,
+                    walk(tree, bits & 0xFF_FFFF, avail),
+                    "bits {bits:06x} avail {avail}"
+                );
             }
         }
     }

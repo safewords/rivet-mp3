@@ -10,6 +10,7 @@
 //! check (a mistyped digit shows up there or as a kink in the curve).
 
 /// D[0..=256] as printed in Table 3-B.3.
+#[rustfmt::skip]
 pub(crate) const D_HALF: [f64; 257] = [
     0.000000000, -0.000015259, -0.000015259, -0.000015259, -0.000015259, -0.000015259, -0.000015259, -0.000030518,
     -0.000030518, -0.000030518, -0.000030518, -0.000045776, -0.000045776, -0.000061035, -0.000061035, -0.000076294,
@@ -75,7 +76,9 @@ mod tests {
         // low-pass impulse response: its third differences stay small. A
         // mistyped digit makes a spike far above the bound.
         let d = synthesis_window();
-        let h: Vec<f64> = (0..512).map(|n| if (n / 64) % 2 == 1 { -d[n] } else { d[n] }).collect();
+        let h: Vec<f64> = (0..512)
+            .map(|n| if (n / 64) % 2 == 1 { -d[n] } else { d[n] })
+            .collect();
         for n in 3..512 {
             let d3 = h[n] - 3.0 * h[n - 1] + 3.0 * h[n - 2] - h[n - 3];
             assert!(d3.abs() < 2.5e-4, "third difference {d3} at {n}");

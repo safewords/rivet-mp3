@@ -7,6 +7,7 @@
 /// Long-block scalefactor band boundaries (23 entries, 0..=576) by
 /// sampling frequency, in [`crate::FrameHeader::sample_rate`] order:
 /// 44.1, 48, 32 kHz; 22.05, 24, 16 kHz; 11.025, 12, 8 kHz.
+#[rustfmt::skip]
 pub(crate) const SFB_LONG: [[u16; 23]; 9] = [
     [0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288, 342, 418, 576],
     [0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128, 156, 190, 230, 276, 330, 384, 576],
@@ -34,7 +35,9 @@ pub(crate) const SFB_SHORT: [[u16; 14]; 9] = [
 ];
 
 /// pretab (Table 3-B.6), by long scalefactor band 0..=21.
-pub(crate) const PRETAB: [u8; 22] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0];
+pub(crate) const PRETAB: [u8; 22] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0,
+];
 
 /// MPEG-1 scalefac_compress -> (slen1, slen2), 2.4.2.7.
 pub(crate) const SLEN: [(u8, u8); 16] = [
