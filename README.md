@@ -75,7 +75,7 @@ scfsi, free format, Layer I and II encoding.
 
 On a Ryzen 9 9950X (Windows, a shared machine, best of five), in multiples
 of real time, for 60 s of a 16-bit stereo 44.1 kHz album track;
-`cargo run --release --example bench -- <pcm.raw>` measures it on any
+`cargo run --release --example mp3_bench -- <pcm.raw>` measures it on any
 16-bit stereo 44.1 kHz raw PCM.
 
 | | before | now |

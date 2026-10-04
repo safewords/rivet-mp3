@@ -1,5 +1,5 @@
 //! Encoder and decoder throughput:
-//! `cargo run --release --example bench -- <pcm.raw> [seconds] [runs] [file.mp3 …]`.
+//! `cargo run --release --example mp3_bench -- <pcm.raw> [seconds] [runs] [file.mp3 …]`.
 //!
 //! `pcm.raw` is 16-bit little-endian stereo PCM at 44.1 kHz. Its first
 //! `seconds` (default 60) are encoded at 128 kb/s CBR, 320 kb/s CBR and
