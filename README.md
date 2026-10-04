@@ -105,7 +105,7 @@ caller's thread).
 sum adds its terms in the order of the plain loop, so the decoder's output
 and the encoder's stream are the same to the bit on every CPU, on every
 code path (the `force-scalar` feature compiles the run-time selection
-out; CI tests both ways, and on arm64), at every thread count — and the
+out; CI tests both ways, on x86-64), at every thread count — and the
 same as before this work: the encoded streams' hashes and the decoded
 output of every ISO conformance stream are unchanged, and unit tests hold
 each rewritten kernel to the loop it replaced.
